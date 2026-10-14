@@ -92,9 +92,9 @@ const CAVE_WALL_MIN := 0.1           # допуск на положение ст
 const CAVE_EPS := 0.0001
 
 const GATE_SCENE := "res://level/zones/gate_entrance.tscn"
-const GATE_NODE_NAMES := ["Cave", "Portcullis", "Arch", "Brazier", "Lever", "WeaponRack", "Table", "Masonry", "Rail1", "Rail2", "Minecart", "MerchantSpot", "GuardRoom", "Yard"]
-const GATE_BODY_NAMES := ["BrazierBody", "WeaponRackBody", "TableBody", "MasonryBody", "MinecartBody", "Rail1Body", "Rail2Body", "ArchLegLBody", "ArchLegRBody", "ArchLintelBody"]
-const GATE_BOXED_PROPS := [["Brazier", "BrazierBody"], ["WeaponRack", "WeaponRackBody"], ["Table", "TableBody"], ["Masonry", "MasonryBody"], ["Minecart", "MinecartBody"], ["Rail1", "Rail1Body"], ["Rail2", "Rail2Body"]]
+const GATE_NODE_NAMES := ["Cave", "Portcullis", "Arch", "Brazier", "Lever", "WeaponRack", "Table", "Masonry", "Rail1", "Rail2", "Minecart", "MerchantSpot", "GuardRoom", "Yard", "FounderStatue", "Stall", "WallTorch"]
+const GATE_BODY_NAMES := ["BrazierBody", "WeaponRackBody", "TableBody", "MasonryBody", "MinecartBody", "Rail1Body", "Rail2Body", "ArchLegLBody", "ArchLegRBody", "ArchLintelBody", "FounderStatueBody", "StallBody", "WallTorchBody"]
+const GATE_BOXED_PROPS := [["Brazier", "BrazierBody"], ["WeaponRack", "WeaponRackBody"], ["Table", "TableBody"], ["Masonry", "MasonryBody"], ["Minecart", "MinecartBody"], ["Rail1", "Rail1Body"], ["Rail2", "Rail2Body"], ["FounderStatue", "FounderStatueBody"], ["Stall", "StallBody"], ["WallTorch", "WallTorchBody"]]
 const GATE_GUARD_ROOM := "GuardRoom"
 const GATE_GUARD_BOXES_MIN := 5
 const GATE_OPENING_WIDTH := 3.8
@@ -117,7 +117,47 @@ const ARCH_BODIES := ["ArchLegLBody", "ArchLegRBody", "ArchLintelBody"]
 # Единый допуск всех проверок зоны (мировые AABB, коробки, трансформы); проверки оболочки — CAVE_EPS.
 const GATE_BOX_EPS := 0.02
 
+# Двор T2r-b2: статуя основателя, торговая палатка, настенный факел (design.md:62-63, :69, :77).
+# Ассеты — выбранные пользователем модели Hunyuan (plan.md:58-60); проверка подмены ассета
+# защищает от молчаливой замены меша под тем же именем узла.
+const STATUE_GLB := "res://assets/props/founder_statue_1024.glb"
+const STALL_GLB := "res://assets/props/stall_1024.glb"
+const TORCH_GLB := "res://assets/props/wall-torch_1024.glb"
+# Высота статуи — объекта ЦЕЛИКОМ, вместе с постаментом: design.md:62 говорит «скульптура
+# ~4-5 м на ступенчатом постаменте», постамент добавляет ~1.4 м, поэтому мерить только
+# скульптуру нельзя (занизит результат). Постамент собран в сцену детьми FounderStatue и
+# входит в его мировой AABB, поэтому мера честная.
+const STATUE_H_MIN := 4.0
+const STATUE_H_MAX := 5.0
+const STATUE_PEDESTAL_STEPS := 3      # ступенчатый постамент из коробок (design.md:62)
+const STATUE_BASE_SIZE := 3.0         # постамент ~3x3 м (design.md:62)
+const STATUE_BASE_TOL := 0.15
+const STATUE_SEAT_EPS := 0.05         # скульптура стоит на постаменте без зазора и без провала
+const STATUE_CENTRE_Z := 0.5          # фокус по центру проёма: |z| центра скульптуры <= 0.5
+# Палатка и факел «~1 м» (plan.md:59-60): диапазон шире цели на 0.2 м в каждую сторону,
+# но уже, чем был бы «1.0 +/- 50%».
+const PROP_H_MIN := 0.8
+const PROP_H_MAX := 1.4
+const YARD_PROP_EPS := 0.05           # основание на полу двора (y = 0)
+const STALL_SPOT_CLEAR := 1.2         # палатка не загораживает точку торговца (MerchantSpot)
+# Факел настенный: низ заметно выше пола, верх ниже потолка двора, тело вплотную к породе.
+const TORCH_MOUNT_MIN_Y := 1.2
+const TORCH_MOUNT_MAX_Y := 2.2
+const TORCH_WALL_GAP := 0.15
+# Взгляд изнутри (design.md:63 «фокус взгляда изнутри через арку»): точка в зале перед
+# тоннелем на высоте глаз камеры (EYE_HEIGHT 2.1-2.2 м). x = 4.0 — ближайшая к воротам
+# типичная точка стояния (2.8 м перед лбом породы x = 6.8), то есть самая требовательная
+# к обзору: чем ближе взгляд, тем уже проекция объекта на проём.
+const VIEW_EYE := Vector3(4.0, 2.15, 0.0)
+const VIEW_MARGIN := 0.2              # запас от края проёма по ширине и высоте
+const VIEW_SIGHT_EPS := 0.05          # попадание в породу ближе этой дистанции = луч перекрыт
+const VIEW_SAMPLES := 24              # выборка вершин меша для лучей (детерминированная)
+const TORCH_SAMPLES := 8              # у факела силуэт и так читается его AABB
+
 var failed := 0
+# Треугольники породы для проверок зоны (лучи видимости); наполняется в check_cave_shell,
+# иначе читается напрямую из CAVE_GLB_PATH — проверка зоны не зависит от порядка вызовов.
+var cave_tris_cache: Array = []
 
 
 func _initialize() -> void:
@@ -522,6 +562,7 @@ func check_cave_shell() -> void:
 		shell.free()
 		return
 	var tris := cave_tris(faces)
+	cave_tris_cache = tris
 	print("info: оболочка: треугольников %d, поверхностей %d" % [tris.size(), mesh.get_surface_count()])
 
 	var stats := cave_stats(tris)
@@ -818,6 +859,7 @@ func check_gate_entrance() -> void:
 	check_gate_table(zone)
 	check_gate_cave_collision(zone)
 	check_gate_yard(zone)
+	check_gate_yard_props(zone)
 	zone.free()
 
 
@@ -1153,6 +1195,279 @@ func check_gate_yard(zone: Node) -> void:
 	else:
 		failed += 1
 		print("ПРОВАЛ MerchantSpot не на y≈0: y %.4f, верх двора %.4f" % [merchant.position.y, top])
+
+
+# Двор T2r-b2: статуя основателя, торговая палатка, настенный факел.
+# Общее для всех трёх — размеры, положение в границах двора и то, что меш взят из
+# ожидаемого ассета; отличаются основанием (пол/стена) и видимостью из проёма.
+func check_gate_yard_props(zone: Node) -> void:
+	check_gate_statue(zone)
+	check_gate_stall(zone)
+	check_gate_torch(zone)
+
+
+# Статуя: высота объекта вместе с постаментом, постамент ступенчатый ~3x3 м, скульптура
+# стоит на нём без зазора, центр по z — по центру проёма, и статуя видна из зала.
+func check_gate_statue(zone: Node) -> void:
+	var statue := zone.get_node_or_null("FounderStatue") as Node3D
+	if statue == null:
+		failed += 1
+		print("ПРОВАЛ у FounderStatue нет узла")
+		return
+	var bad: Array[String] = []
+	bad.append_array(prop_mesh_problems(statue, STATUE_GLB))
+	var box := prop_world_aabb(statue)
+	if box.size.y < STATUE_H_MIN or box.size.y > STATUE_H_MAX:
+		bad.append("высота с постаментом %.2f м вне %.1f-%.1f м" % [box.size.y, STATUE_H_MIN, STATUE_H_MAX])
+	if absf(box.position.y) > YARD_PROP_EPS:
+		bad.append("основание на y %.3f, а пол двора y=0" % box.position.y)
+	if not yard_contains_box(box):
+		bad.append("AABB %s выходит за границы двора" % str(box))
+	var pedestal := statue.get_node_or_null("Pedestal") as Node3D
+	var sculpture := statue.get_node_or_null("Sculpture") as Node3D
+	var base_world := AABB()
+	if pedestal == null or sculpture == null:
+		bad.append("внутри FounderStatue нет узлов Pedestal и Sculpture")
+	else:
+		var steps := count_of_class(pedestal, "MeshInstance3D")
+		var base := prop_world_aabb(pedestal)
+		# prop_world_aabb не включает трансформ самого корня (соглашение функции), поэтому
+		# скульптура и постамент меряются в одной системе координат FounderStatue, а в мир
+		# переводятся её трансформом.
+		var seat := prop_world_aabb(sculpture)
+		var seat_world := statue.transform * seat
+		if steps < STATUE_PEDESTAL_STEPS:
+			bad.append("ступеней постамента %d, нужно >= %d" % [steps, STATUE_PEDESTAL_STEPS])
+		if absf(base.size.x - STATUE_BASE_SIZE) > STATUE_BASE_TOL or absf(base.size.z - STATUE_BASE_SIZE) > STATUE_BASE_TOL:
+			bad.append("постамент %.2f x %.2f м вместо %.1f x %.1f" % [base.size.x, base.size.z, STATUE_BASE_SIZE, STATUE_BASE_SIZE])
+		if absf(seat.position.y - base.end.y) > STATUE_SEAT_EPS:
+			bad.append("скульптура стоит на y %.3f, верх постамента y %.3f" % [seat.position.y, base.end.y])
+		if absf(seat_world.get_center().z) > STATUE_CENTRE_Z:
+			bad.append("центр скульптуры по z %.2f, нужно |z| <= %.1f" % [seat_world.get_center().z, STATUE_CENTRE_Z])
+		base_world = statue.transform * base
+		print("info: статуя: скульптура %.2f x %.2f x %.2f м, низ y %.2f, центр по z %.2f; постамент %d ступени %.2f x %.2f x %.2f м, верх y %.2f"
+			% [seat_world.size.x, seat_world.size.y, seat_world.size.z, seat_world.position.y, seat_world.get_center().z,
+			steps, base_world.size.x, base_world.size.y, base_world.size.z, base_world.end.y])
+	bad.append_array(view_cone_bad(box))
+	var blocked := sight_blocked(mesh_sample_points(sculpture, VIEW_SAMPLES, statue.transform), VIEW_EYE)
+	if not blocked.is_empty():
+		bad.append("луч от %s не доходит до %d точек скульптуры: %s" % [str(VIEW_EYE), blocked.size(), ", ".join(blocked)])
+	if bad.is_empty():
+		print("ok: статуя: высота с постаментом %.2f м в диапазоне %.1f-%.1f, ступенчатый постамент %.2f x %.2f м, AABB %s, видна из проёма"
+			% [box.size.y, STATUE_H_MIN, STATUE_H_MAX, base_world.size.x, base_world.size.z, str(box)])
+	else:
+		failed += 1
+		print("ПРОВАЛ статуя: %s" % "; ".join(bad))
+
+
+# Торговая палатка: ~1 м, стоит на полу двора, в границах двора и не загораживает MerchantSpot.
+func check_gate_stall(zone: Node) -> void:
+	var stall := zone.get_node_or_null("Stall") as Node3D
+	if stall == null:
+		failed += 1
+		print("ПРОВАЛ у Stall нет узла")
+		return
+	var bad: Array[String] = []
+	bad.append_array(prop_mesh_problems(stall, STALL_GLB))
+	var box := prop_world_aabb(stall)
+	if box.size.y < PROP_H_MIN or box.size.y > PROP_H_MAX:
+		bad.append("высота %.2f м вне %.1f-%.1f м" % [box.size.y, PROP_H_MIN, PROP_H_MAX])
+	if absf(box.position.y) > YARD_PROP_EPS:
+		bad.append("основание на y %.3f, а пол двора y=0" % box.position.y)
+	if not yard_contains_box(box):
+		bad.append("AABB %s выходит за границы двора" % str(box))
+	var merchant := zone.get_node_or_null("MerchantSpot") as Node3D
+	if merchant != null:
+		var clear := box_distance_xz(merchant.position, box.get_center(), box.size)
+		if clear < STALL_SPOT_CLEAR:
+			bad.append("до MerchantSpot %.2f м, нужно >= %.1f" % [clear, STALL_SPOT_CLEAR])
+	if bad.is_empty():
+		print("ok: палатка: высота %.2f м в диапазоне %.1f-%.1f, на полу двора, AABB %s, до MerchantSpot >= %.1f м"
+			% [box.size.y, PROP_H_MIN, PROP_H_MAX, str(box), STALL_SPOT_CLEAR])
+	else:
+		failed += 1
+		print("ПРОВАЛ палатка: %s" % "; ".join(bad))
+
+
+# Факел настенный: ~1 м, висит на высоте, вплотную к породе двора и виден из проёма.
+func check_gate_torch(zone: Node) -> void:
+	var torch := zone.get_node_or_null("WallTorch") as Node3D
+	if torch == null:
+		failed += 1
+		print("ПРОВАЛ у WallTorch нет узла")
+		return
+	var bad: Array[String] = []
+	bad.append_array(prop_mesh_problems(torch, TORCH_GLB))
+	var box := prop_world_aabb(torch)
+	if box.size.y < PROP_H_MIN or box.size.y > PROP_H_MAX:
+		bad.append("высота %.2f м вне %.1f-%.1f м" % [box.size.y, PROP_H_MIN, PROP_H_MAX])
+	if box.position.y < TORCH_MOUNT_MIN_Y or box.position.y > TORCH_MOUNT_MAX_Y:
+		bad.append("низ y %.2f: настенный факел вешается на высоте %.1f-%.1f м, а не стоит на полу" % [box.position.y, TORCH_MOUNT_MIN_Y, TORCH_MOUNT_MAX_Y])
+	if not yard_contains_box(box):
+		bad.append("AABB %s выходит за границы двора" % str(box))
+	var gap := minf(absf(CAVE_YARD_WALL_X - box.position.x), minf(absf(box.end.x - CAVE_YARD_FAR_X), minf(absf(-CAVE_YARD_HALF - box.position.z), absf(box.end.z - CAVE_YARD_HALF))))
+	if gap > TORCH_WALL_GAP:
+		bad.append("до ближайшей стены двора %.2f м, нужно <= %.2f (факел висит на rock)" % [gap, TORCH_WALL_GAP])
+	bad.append_array(view_cone_bad(box))
+	var blocked := sight_blocked(mesh_sample_points(torch, TORCH_SAMPLES), VIEW_EYE)
+	if not blocked.is_empty():
+		bad.append("луч от %s не доходит до %d точек факела: %s" % [str(VIEW_EYE), blocked.size(), ", ".join(blocked)])
+	if bad.is_empty():
+		print("ok: факел: высота %.2f м, навешен на %.2f-%.2f (зазор до породы %.2f м), AABB %s, виден из проёма"
+			% [box.size.y, box.position.y, box.end.y, gap, str(box)])
+	else:
+		failed += 1
+		print("ПРОВАЛ факел: %s" % "; ".join(bad))
+
+
+# Проверки, общие для всех трёх объектов двора: в поддереве ровно один инстанс меша,
+# он из ожидаемого ассета и масштаб по нему равномерный (как на арке). Проверяется узел
+# с инстансом, а не корень: у FounderStatue масштаб несёт Sculpture. Проблемы
+# возвращаются списком — счётчик failed считает вызывающая сторона, один провал на объект.
+func prop_mesh_problems(node: Node3D, path: String) -> Array[String]:
+	var bad: Array[String] = []
+	var instances: Array = []
+	collect_scene_instances(node, instances)
+	if instances.size() != 1:
+		bad.append("инстансов меша в поддереве %d, ожидался 1" % instances.size())
+		return bad
+	var mesh_node := instances[0] as Node3D
+	if mesh_node.scene_file_path != path:
+		bad.append("инстанс %s, ожидался %s" % [mesh_node.scene_file_path, path])
+	var basis := mesh_node.transform.basis
+	var scale := basis.x.length()
+	if absf(basis.y.length() - scale) > 0.001 or absf(basis.z.length() - scale) > 0.001:
+		bad.append("масштаб по осям %.3f %.3f %.3f, нужен равномерный" % [scale, basis.y.length(), basis.z.length()])
+	return bad
+
+
+func collect_scene_instances(node: Node, out: Array) -> void:
+	if node.scene_file_path != "":
+		out.append(node)
+	for child in node.get_children():
+		collect_scene_instances(child, out)
+
+
+# AABB объекта целиком внутри вырубленного двора (стены x = 8/15, |z| = 4, допуск CAVE_WALL_MIN).
+func yard_contains_box(box: AABB) -> bool:
+	return box.position.x >= CAVE_YARD_WALL_X - CAVE_WALL_MIN and box.end.x <= CAVE_YARD_FAR_X + CAVE_WALL_MIN \
+		and box.position.z >= -CAVE_YARD_HALF - CAVE_WALL_MIN and box.end.z <= CAVE_YARD_HALF + CAVE_WALL_MIN
+
+
+# Конус обзора: проекция AABB на плоскость проёма (x = CAVE_YARD_WALL_X) из точки взгляда
+# должна помещаться в проём мимо VIEW_MARGIN — «статуя по центру» (design.md:63).
+func view_cone_bad(box: AABB) -> Array[String]:
+	var bad: Array[String] = []
+	var z_worst := 0.0
+	var y_lo := INF
+	var y_hi := -INF
+	var behind := 0
+	for corner in aabb_corners(box):
+		if corner.x <= CAVE_YARD_WALL_X:
+			behind += 1
+			continue
+		var cross := view_plane_hit(VIEW_EYE, corner)
+		z_worst = maxf(z_worst, absf(cross.z))
+		y_lo = minf(y_lo, cross.y)
+		y_hi = maxf(y_hi, cross.y)
+	if behind == aabb_corners(box).size():
+		bad.append("объект целиком за плоскостью проёма x=%.1f" % CAVE_YARD_WALL_X)
+		return bad
+	var half := GATE_OPENING_WIDTH * 0.5
+	if z_worst > half - VIEW_MARGIN:
+		bad.append("силуэт выходит за проём: |z| %.2f на проёме, нужно <= %.2f" % [z_worst, half - VIEW_MARGIN])
+	if y_lo < GATE_BOX_EPS or y_hi > GATE_OPENING_HEIGHT - VIEW_MARGIN:
+		bad.append("силуэт не вписывается по высоте: y %.2f..%.2f на проёме, нужно %.2f..%.2f" % [y_lo, y_hi, GATE_BOX_EPS, GATE_OPENING_HEIGHT - VIEW_MARGIN])
+	return bad
+
+
+# Пересечение отрезка «взгляд -> точка» с плоскостью проёма.
+func view_plane_hit(eye: Vector3, point: Vector3) -> Vector3:
+	var f := (CAVE_YARD_WALL_X - eye.x) / (point.x - eye.x)
+	return eye + (point - eye) * f
+
+
+# Точки проверки видимости: углы AABB плюс детерминированная выборка вершин меша
+# (шаг по индексу). Углы дают силуэт, выборка — реальную форму модели. `outer` —
+# трансформ предка, в системе координат которого меряем (prop_world_aabb трансформ корня
+# не включает, а лучи бьют по мировой породе).
+func mesh_sample_points(node: Node3D, samples: int, outer: Transform3D = Transform3D.IDENTITY) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	if node == null:
+		return out
+	for corner in aabb_corners(outer * prop_world_aabb(node)):
+		out.append(corner)
+	var verts := collect_faces(node, outer)
+	if verts.is_empty() or samples <= 0:
+		return out
+	var step := maxi(1, verts.size() / samples)
+	var i := 0
+	while i < verts.size():
+		out.append(verts[i])
+		i += step
+	return out
+
+
+func aabb_corners(box: AABB) -> Array:
+	return [
+		Vector3(box.position.x, box.position.y, box.position.z),
+		Vector3(box.end.x, box.position.y, box.position.z),
+		Vector3(box.position.x, box.end.y, box.position.z),
+		Vector3(box.end.x, box.end.y, box.position.z),
+		Vector3(box.position.x, box.position.y, box.end.z),
+		Vector3(box.end.x, box.position.y, box.end.z),
+		Vector3(box.position.x, box.end.y, box.end.z),
+		Vector3(box.end.x, box.end.y, box.end.z),
+	]
+
+
+# Точки объекта, до которых взгляд из eye не доходит: луч упирается в породу раньше точки.
+# Луч идёт по породе (cave_rays), поэтому учитывается и стена у ворот, и весь коридор.
+func sight_blocked(points: PackedVector3Array, eye: Vector3) -> Array[String]:
+	var blocked: Array[String] = []
+	if points.is_empty():
+		return blocked
+	var tris := get_cave_tris()
+	if tris.is_empty():
+		failed += 1
+		print("ПРОВАЛ нечем проверить видимость: порода не прочиталась")
+		return blocked
+	# Отсев треугольников вне коридора лучей (по x) — породы за спиной и позади объекта
+	# в лучах не участвуют.
+	var x_hi := eye.x
+	for point in points:
+		x_hi = maxf(x_hi, point.x)
+	var corridor: Array = []
+	for tri in tris:
+		var t_lo: float = tri[0].x
+		var t_hi: float = t_lo
+		for k in 3:
+			t_lo = minf(t_lo, tri[k].x)
+			t_hi = maxf(t_hi, tri[k].x)
+		if t_hi >= eye.x - 0.5 and t_lo <= x_hi + 0.5:
+			corridor.append(tri)
+	for point in points:
+		var dir := point - eye
+		var dist := dir.length()
+		if dist <= 0.001:
+			continue
+		var hits := cave_rays(corridor, eye, dir / dist, 1)
+		if not hits.is_empty() and float(hits[0]) < dist - VIEW_SIGHT_EPS:
+			blocked.append("(%.2f, %.2f, %.2f)" % [point.x, point.y, point.z])
+	return blocked
+
+
+# Треугольники породы: из check_cave_shell, иначе читаются напрямую из CAVE_GLB_PATH.
+func get_cave_tris() -> Array:
+	if not cave_tris_cache.is_empty():
+		return cave_tris_cache
+	var packed := load(CAVE_GLB_PATH) as PackedScene
+	if packed == null:
+		return [] as Array
+	var shell := packed.instantiate()
+	cave_tris_cache = cave_tris(collect_faces(shell, Transform3D.IDENTITY))
+	shell.free()
+	return cave_tris_cache
 
 
 # AABB всех мешей поддерева в координатах узла-родителя (без дерева сцены).
