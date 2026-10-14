@@ -117,6 +117,22 @@ const ARCH_BODIES := ["ArchLegLBody", "ArchLegRBody", "ArchLintelBody"]
 # Единый допуск всех проверок зоны (мировые AABB, коробки, трансформы); проверки оболочки — CAVE_EPS.
 const GATE_BOX_EPS := 0.02
 
+# Решётка ворот (T3). open_height = 3.5 м — это СОБСТВЕННАЯ высота подъёма решётки, а не высота
+# проёма (решение пользователя 13.10.2026, ledger.md): нижняя часть уходит в нишу над проёмом,
+# проход остаётся открытым для капсулы 1.8 м. Поднимать на всю высоту проёма нельзя.
+const PORTCULLIS_OPEN_HEIGHT := 3.5
+# Потолок ожидания подъёма: анимация open_time (1.0 с) идёт в физических кадрах, ждать 2.5 с.
+const PORTCULLIS_RAISE_FRAME_CAP := 150
+const PORTCULLIS_REPEAT_FRAMES := 20    # сколько кадров ждём после третьего open()
+# Физическая проба прохода: капсула игрока (level.tscn: радиус 0.35, высота 1.8) едет из двора
+# в тоннель по -X через решётку и арку. Старт на 0.95 — низ капсулы на 0.05 м выше пола двора (y = 0).
+const PORTCULLIS_CAPSULE_RADIUS := 0.35
+const PORTCULLIS_CAPSULE_HEIGHT := 1.8
+const PORTCULLIS_START := Vector3(8.6, 0.95, 0.0)
+const PORTCULLIS_PUSH_FRAMES := 90
+const PORTCULLIS_MIN_TRAVEL := 1.0     # капсула должна реально ехать, а не стоять на месте
+const PORTCULLIS_PASSED_X := 6.5       # прошёл: за лбом породы (x = 6.8) и центром арки (x = 6.5)
+
 # Двор T2r-b2: статуя основателя, торговая палатка, настенный факел (design.md:62-63, :69, :77).
 # Ассеты — выбранные пользователем модели Hunyuan (plan.md:58-60); проверка подмены ассета
 # защищает от молчаливой замены меша под тем же именем узла.
@@ -189,7 +205,7 @@ func _initialize() -> void:
 	check_mouse(level)
 	await check_movement(level)
 	check_cave_shell()
-	check_gate_entrance()
+	await check_gate_entrance()
 
 	print("failed: %d" % failed)
 	quit(EXIT_FAIL if failed > 0 else EXIT_OK)
@@ -860,6 +876,12 @@ func check_gate_entrance() -> void:
 	check_gate_cave_collision(zone)
 	check_gate_yard(zone)
 	check_gate_yard_props(zone)
+	# Механика решётки — последняя: она двигает Portcullis вверх, а мерки AABB выше
+	# (перекрытие проёма, верх решётки под перемычкой) считают решётку закрытой.
+	root.add_child(zone)
+	await check_gate_portcullis_closed(zone)
+	await check_gate_portcullis_open(zone)
+	root.remove_child(zone)
 	zone.free()
 
 
@@ -944,11 +966,117 @@ func check_gate_portcullis(zone: Node) -> void:
 		failed += 1
 		print("ПРОВАЛ решётка не перекрывает проём %.1fx%.1f: z %.2f..%.2f, y %.2f..%.2f, x от %.2f"
 			% [GATE_OPENING_WIDTH, GATE_OPENING_HEIGHT, box.position.z, box.end.z, box.position.y, box.end.y, box.position.x])
-	if count_of_class(portcullis, "StaticBody3D") == 0:
-		print("ok: у решётки нет коллизии (задача 3)")
+	# T3: собственная коллизия решётки — AnimatableBody3D с коробкой по AABB меша.
+	# До T3 здесь стояла временная проверка, ЗАПРЕЩАВШАЯ коллизию («её ставит задача 3»):
+	# направление поменяно на требование, иначе проём оставался бы «проходимым».
+	if portcullis.is_class("AnimatableBody3D") and count_of_class(portcullis, "CollisionShape3D") > 0 and aabb_close(body_box(portcullis), box):
+		print("ok: у решётки есть коллизия (задача 3 выполнена): AnimatableBody3D, коробка по AABB меша %s" % str(box))
 	else:
 		failed += 1
-		print("ПРОВАЛ у решётки есть коллизия: её ставит задача 3, не эта")
+		print("ПРОВАЛ у решётки нет коллизии: нужен AnimatableBody3D с CollisionShape3D по AABB меша (в сцене коробка %s)"
+			% str(body_box(portcullis)))
+
+
+# Решётка закрыта на старте и держит проём: под ней капсула не проходит.
+# Физическая проверка, поэтому зона уже в дереве (см. check_gate_entrance).
+func check_gate_portcullis_closed(zone: Node) -> void:
+	var portcullis := zone.get_node_or_null("Portcullis")
+	if portcullis == null or not portcullis.has_method("is_open") or not portcullis.has_method("open"):
+		failed += 1
+		print("ПРОВАЛ у Portcullis нет механики подъёма (нужны open() и is_open())")
+		return
+	if not portcullis.is_open():
+		print("ok: решётка закрыта на старте: is_open() == false")
+	else:
+		failed += 1
+		print("ПРОВАЛ решётка открыта на старте: is_open() == true")
+	var grate_face: float = prop_world_aabb(portcullis as Node3D).position.x
+	var end := await push_capsule(zone, PORTCULLIS_PUSH_FRAMES)
+	var travelled := capsule_travel(end)
+	if travelled < PORTCULLIS_MIN_TRAVEL:
+		failed += 1
+		print("ПРОВАЛ капсула не проехала к решётке: путь %.2f м < %.2f" % [travelled, PORTCULLIS_MIN_TRAVEL])
+	if end.x >= grate_face:
+		print("ok: капсула не проходит сквозь закрытую решётку: конец x %.2f >= внутренняя грань %.2f" % [end.x, grate_face])
+	else:
+		failed += 1
+		print("ПРОВАЛ капсула прошла сквозь закрытую решётку: конец x %.2f < внутренняя грань %.2f" % [end.x, grate_face])
+
+
+# open() поднимает решётку на open_height, повторный вызов ничего не добавляет, проход открыт.
+func check_gate_portcullis_open(zone: Node) -> void:
+	var portcullis := zone.get_node_or_null("Portcullis")
+	if portcullis == null or not portcullis.has_method("open") or not portcullis.has_method("is_open"):
+		return   # провал уже выведен в check_gate_portcullis_closed
+	var closed_y: float = (portcullis as Node3D).position.y
+	portcullis.open()
+	portcullis.open()   # повторный вызов на середине подъёма
+	var frames := 0
+	while frames < PORTCULLIS_RAISE_FRAME_CAP and not portcullis.is_open():
+		await physics_frame
+		frames += 1
+	var raised: float = (portcullis as Node3D).position.y - closed_y
+	if frames < PORTCULLIS_RAISE_FRAME_CAP and absf(raised - PORTCULLIS_OPEN_HEIGHT) <= GATE_BOX_EPS and portcullis.is_open():
+		print("ok: open() поднял решётку на %.2f м за %d физ. кадров, is_open() == true" % [raised, frames])
+	else:
+		failed += 1
+		print("ПРОВАЛ open(): подъём на %.2f м (нужно %.2f), is_open() %s, ждал %d физ. кадров"
+			% [raised, PORTCULLIS_OPEN_HEIGHT, str(portcullis.is_open()), frames])
+	# Третий вызов — уже после полного подъёма: подъём должен остаться ровно open_height.
+	portcullis.open()
+	for i in PORTCULLIS_REPEAT_FRAMES:
+		await physics_frame
+	var after_repeat: float = (portcullis as Node3D).position.y - closed_y
+	if after_repeat <= PORTCULLIS_OPEN_HEIGHT + GATE_BOX_EPS:
+		print("ok: повторный open() ничего не добавил: подъём после трёх вызовов %.2f м" % after_repeat)
+	else:
+		failed += 1
+		print("ПРОВАЛ повторный open() накопил подъём: %.2f м > %.2f" % [after_repeat, PORTCULLIS_OPEN_HEIGHT])
+	var end := await push_capsule(zone, PORTCULLIS_PUSH_FRAMES)
+	var travelled := capsule_travel(end)
+	if travelled < PORTCULLIS_MIN_TRAVEL:
+		failed += 1
+		print("ПРОВАЛ капсула не проехала к воротам: путь %.2f м < %.2f" % [travelled, PORTCULLIS_MIN_TRAVEL])
+	if end.x <= PORTCULLIS_PASSED_X:
+		print("ok: капсула проходит сквозь поднятую решётку: конец x %.2f <= %.2f" % [end.x, PORTCULLIS_PASSED_X])
+	else:
+		failed += 1
+		print("ПРОВАЛ капсула не прошла поднятую решётку: конец x %.2f > %.2f" % [end.x, PORTCULLIS_PASSED_X])
+	# Возвращаем закрытое положение: мерки AABB решётки не должны зависеть от порядка вызовов.
+	(portcullis as Node3D).position.y = closed_y
+
+
+# Путь капсулы по плоскости XZ от старта прогона: вертикаль в этой пробе не участвует.
+func capsule_travel(end: Vector3) -> float:
+	return Vector2(end.x - PORTCULLIS_START.x, end.z - PORTCULLIS_START.z).length()
+
+
+# Прогон капсулы игрока через ворота по -X (из двора в тоннель); вертикаль не участвует —
+# низ капсулы на 0.05 м выше пола двора, как в check_movement. Возвращает конечную позицию.
+func push_capsule(zone: Node, frames: int) -> Vector3:
+	var body := CharacterBody3D.new()
+	body.name = "ProbeCapsule"
+	var shape := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = PORTCULLIS_CAPSULE_RADIUS
+	capsule.height = PORTCULLIS_CAPSULE_HEIGHT
+	shape.shape = capsule
+	shape.position = Vector3(0.0, PORTCULLIS_CAPSULE_HEIGHT * 0.5, 0.0)
+	body.add_child(shape)
+	zone.add_child(body)
+	body.global_position = PORTCULLIS_START
+	await physics_frame   # тело должно встать в физический мир до первого move_and_slide
+	var forward := Vector3(-1.0, 0.0, 0.0)
+	for i in frames:
+		body.velocity = forward * CONTROLLER_SCRIPT.SPEED
+		body.move_and_slide()
+		await physics_frame
+	var end := body.global_position
+	print("info: капсула (прогон %d): старт (%.2f, %.2f, %.2f), конец (%.2f, %.2f, %.2f), путь по XZ %.2f м, шагов %d"
+		% [frames, PORTCULLIS_START.x, PORTCULLIS_START.y, PORTCULLIS_START.z, end.x, end.y, end.z, capsule_travel(end), frames])
+	zone.remove_child(body)
+	body.free()
+	return end
 
 
 # Решётка не врезана в коллизии зоны: её AABB не пересекает ни один StaticBody3D
@@ -959,27 +1087,43 @@ func check_gate_portcullis_clear(zone: Node) -> void:
 		return
 	var box := prop_world_aabb(portcullis)
 	var colliders: Array = []
-	collect_colliders(zone, Transform3D.IDENTITY, colliders)
+	var total_colliders: Array = []
+	collect_colliders(zone, Transform3D.IDENTITY, total_colliders)
+	# Свою коробку решётки (T3) исключаем: она по построению совпадает с AABB меша, о котором
+	# идёт речь, и иначе проверка всегда находила бы «пересечение сама с собой».
+	for entry in total_colliders:
+		if not is_within(portcullis, entry[3]):
+			colliders.append(entry)
 	var hits: Array[String] = []
 	for entry in colliders:
 		if shape_hits_box(entry[1], entry[0], box):
 			hits.append(entry[2])
 	if hits.is_empty():
-		print("ok: решётка не пересекает коллизии зоны (проверено %d фигур)" % colliders.size())
+		print("ok: решётка не пересекает коллизии зоны (проверено %d фигур, всего в зоне %d)" % [colliders.size(), total_colliders.size()])
 	else:
 		failed += 1
 		print("ПРОВАЛ решётка пересекает коллизии: %s" % ", ".join(hits))
 
 
-# Коллизионные фигуры поддерева: [трансформ в координатах корня, shape, имя тела].
+# Коллизионные фигуры поддерева: [трансформ в координатах корня, shape, имя тела, узел тела].
 func collect_colliders(node: Node, parent_xf: Transform3D, out: Array) -> void:
 	var xf := parent_xf
 	if node is Node3D:
 		xf = parent_xf * (node as Node3D).transform
 	if node is CollisionShape3D and (node as CollisionShape3D).shape != null:
-		out.append([xf, (node as CollisionShape3D).shape, node.get_parent().name])
+		out.append([xf, (node as CollisionShape3D).shape, node.get_parent().name, node.get_parent()])
 	for child in node.get_children():
 		collect_colliders(child, xf, out)
+
+
+# Внутри ли поддерева root узел node.
+func is_within(root: Node, node: Node) -> bool:
+	var current := node
+	while current != null:
+		if current == root:
+			return true
+		current = current.get_parent()
+	return false
 
 
 # Пересекает ли фигура коробку: для BoxShape3D — её AABB, для trimesh — каждый треугольник.

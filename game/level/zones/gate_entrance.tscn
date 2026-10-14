@@ -21,6 +21,13 @@
 [ext_resource type="PackedScene" path="res://assets/props/founder_statue_1024.glb" id="17_statue"]
 [ext_resource type="PackedScene" path="res://assets/props/stall_1024.glb" id="18_stall"]
 [ext_resource type="PackedScene" path="res://assets/props/wall-torch_1024.glb" id="19_torch"]
+[ext_resource type="Script" path="res://level/zones/portcullis.gd" id="20_portcullis"]
+
+; Решётка ворот (T3): коробка коллизии — AABB меша в координатах узла Portcullis
+; (локально x 0.641152, y 1.024630, z 0.064731; центр (0.002450, 0.512315, -0.000500)).
+; Мировой AABB коробки совпадает с AABB меша: x 6.9476..7.0124, y 0..5.0002, z -1.905..1.905.
+[sub_resource type="BoxShape3D" id="box_portcullis"]
+size = Vector3(0.641152, 1.02463, 0.064731)
 
 [sub_resource type="BoxShape3D" id="box_brazier"]
 size = Vector3(0.922, 0.9, 0.9)
@@ -118,8 +125,24 @@ size = Vector3(1.8, 0.6, 1.8)
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Cave/CaveCollision" unique_id=1125208765]
 shape = ExtResource("16_cave_col")
 
-[node name="Portcullis" type="Node3D" parent="." unique_id=1595889105 instance=ExtResource("3_portc")]
+; Решётка ворот (T3): тело физики с подъёмом по open(), sync_to_physics — решётка едет
+; вертикально, и физика должна видеть её движение. Закрытое положение (x = 6.9805,
+; y = 0.0146) — то же, что до T3: от него зависят мерки «перекрывает проём» и
+; «верх решётки <= низа перемычки» (5.00 <= 5.08).
+; Меш вынесен в инстанс-ребёнка: тип КОРНЯ инстансированной сцены сменить нельзя
+; («Script inherits from native type... can't be assigned to an object of type 'Node3D'»),
+; поэтому тело — отдельный узел, а модель — его ребёнок с тем же трансформом.
+[node name="Portcullis" type="AnimatableBody3D" parent="." unique_id=1595889105]
 transform = Transform3D(0, 0, 1, 0, 4.88, 0, -5.9424284, 0, 0, 6.9805, 0, 0.014559063)
+sync_to_physics = true
+script = ExtResource("20_portcullis")
+open_height = 3.5
+
+[node name="porticullus_1024" parent="Portcullis" instance=ExtResource("3_portc")]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Portcullis"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.00245, 0.512315, -0.0005)
+shape = SubResource("box_portcullis")
 
 [node name="Brazier" type="Node3D" parent="." unique_id=1923474707 instance=ExtResource("4_brazier")]
 transform = Transform3D(1.13, 0, 0, 0, 1.13, 0, 0, 0, 1.13, 2.7, 0, 2.9)
