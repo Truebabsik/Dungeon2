@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://bskbl0l021rg6"
+path="res://.godot/imported/bookshelf_2.obj-a448d35574252177c86a3804daa98537.mesh"
+
+[deps]
+
+files=["res://.godot/imported/bookshelf_2.obj-a448d35574252177c86a3804daa98537.mesh"]
+
+source_file="res://assets/dungeon_pack/obj/bookshelf_2.obj"
+dest_files=["res://.godot/imported/bookshelf_2.obj-a448d35574252177c86a3804daa98537.mesh", "res://.godot/imported/bookshelf_2.obj-a448d35574252177c86a3804daa98537.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

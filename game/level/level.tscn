@@ -1,0 +1,245 @@
+[gd_scene format=3 uid="uid://ccqure2rfdjhr"]
+
+[ext_resource type="PackedScene" uid="uid://c1no0dc7phcsa" path="res://assets/kaykit/stairs_walled.gltf" id="4_vkbyq"]
+[ext_resource type="PackedScene" uid="uid://ql26eky7m1ug" path="res://assets/kaykit/trunk_large_A.gltf" id="5_7jqyl"]
+[ext_resource type="PackedScene" uid="uid://bewjj26hg0k51" path="res://assets/kaykit/coin.gltf" id="6_m5ivw"]
+[ext_resource type="PackedScene" uid="uid://bivwod8m5kiwi" path="res://assets/kaykit/table_small.gltf" id="7_sui6v"]
+[ext_resource type="ArrayMesh" uid="uid://b50yqtkmpjyh1" path="res://assets/dungeon_pack/obj/chain_link.obj" id="8_tv7ir"]
+[ext_resource type="PackedScene" uid="uid://c5qpx3atkxcvq" path="res://assets/kaykit/plate.gltf" id="9_kp5pi"]
+[ext_resource type="PackedScene" uid="uid://d11kk8gtwuoux" path="res://assets/kaykit/banner_brown.gltf" id="10_b7y0n"]
+[ext_resource type="PackedScene" uid="uid://c6tsly1tibtov" path="res://assets/kaykit/box_large.gltf" id="11_v4yay"]
+[ext_resource type="PackedScene" uid="uid://c6j1i7wqm26hh" path="res://assets/kaykit/wall_doorway_Tsplit.gltf" id="12_xl7j7"]
+[ext_resource type="PackedScene" uid="uid://cbtf0wpho30aj" path="res://assets/kaykit/shelves.gltf" id="13_o0wo3"]
+[ext_resource type="PackedScene" uid="uid://de6lpulpkcm41" path="res://assets/kaykit/keyring.gltf" id="14_kdsbj"]
+[ext_resource type="PackedScene" uid="uid://4bs5rywiidgo" path="res://assets/kaykit/candle_thin_lit.gltf" id="15_ml0fe"]
+[ext_resource type="PackedScene" uid="uid://bmmse32xsxoqh" path="res://assets/kaykit_animations/animations/Rig_Medium/Rig_Medium_General.glb" id="15_rmg"]
+[ext_resource type="ArrayMesh" uid="uid://dml4ej0xyyclv" path="res://assets/dungeon_pack/obj/book_1.obj" id="16_h74y2"]
+[ext_resource type="Script" path="res://level/character_controller.gd" id="16_ctrl"]
+[ext_resource type="MeshLibrary" uid="uid://cm7fsg1yj5qfl" path="res://assets/mesh_library.tres" id="17_meshlib"]
+[ext_resource type="PackedScene" uid="uid://chvi0onjkom53" path="res://assets/kaykit/bed_decorated.gltf" id="17_ml0fe"]
+[ext_resource type="PackedScene" uid="uid://hhfm20gjcmcl" path="res://assets/kaykit/coin_stack_small.gltf" id="18_h74y2"]
+[ext_resource type="PackedScene" uid="uid://uwrv0vl8x5bj" path="res://assets/kaykit/bottle_A_brown.gltf" id="19_7cdnq"]
+[ext_resource type="ArrayMesh" uid="uid://d07ldnwh33ut0" path="res://assets/dungeon_pack/obj/carpet_plane_flat.obj" id="20_lsj08"]
+[ext_resource type="PackedScene" uid="uid://s371ac0230y1" path="res://assets/kaykit/crates_stacked.gltf" id="21_u5n7q"]
+[ext_resource type="ArrayMesh" uid="uid://roeacca13qmd" path="res://assets/dungeon_pack/obj/r_chest_gold.obj" id="22_qslh7"]
+[ext_resource type="ArrayMesh" uid="uid://di4dfkdnv5s6d" path="res://assets/dungeon_pack/obj/cage_1.obj" id="23_kdj2k"]
+[ext_resource type="ArrayMesh" uid="uid://injhpgs7sa3t" path="res://assets/dungeon_pack/obj/cage.obj" id="24_s1aav"]
+[ext_resource type="PackedScene" uid="uid://bbgkmxmev2joa" path="res://assets/kaykit/chest_gold.gltf" id="25_xdahv"]
+[ext_resource type="ArrayMesh" uid="uid://ddr75vxs74k33" path="res://assets/dungeon_pack/obj/crate_2.obj" id="26_krw8e"]
+[ext_resource type="PackedScene" uid="uid://c8v8ub7d0tbp0" path="res://assets/kaykit/rubble_large.gltf" id="27_h74y2"]
+[ext_resource type="PackedScene" uid="uid://cmbrydvpn74wy" path="res://assets/kaykit_adventurers/characters/Ranger.glb" id="28_ranger"]
+[ext_resource type="Script" path="res://level/grid_collision_builder.gd" id="29_gridcol"]
+[ext_resource type="PackedScene" uid="uid://cmv6m0xyehqql" path="res://assets/minecart.glb" id="30_minecart"]
+
+[sub_resource type="Environment" id="Environment_level"]
+background_mode = 1
+background_color = Color(0.95, 0.95, 0.95, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.6, 0.6, 0.6, 1)
+ambient_light_energy = 0.8
+tonemap_mode = 2
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_character"]
+radius = 0.35
+height = 1.8
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_minecart"]
+size = Vector3(0.885818, 0.953226, 0.566331)
+
+[node name="Level" type="Node3D" unique_id=336114472]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1577593945]
+transform = Transform3D(0.8660254, 0.38302222, -0.32139382, 0, 0.64278764, 0.76604444, 0.5, -0.66341394, 0.5566704, 0, 0, 0)
+light_color = Color(1, 0.92, 0.8, 1)
+shadow_enabled = true
+sky_mode = 1
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=263734420]
+transform = Transform3D(0.7071068, -0.5, 0.5, 0, 0.7071068, 0.70710677, -0.7071068, -0.5, 0.5, 94.45082, 40, 66.2063)
+h_offset = 5.0
+v_offset = 5.0
+projection = 1
+current = true
+size = 15.287
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=636930617]
+environment = SubResource("Environment_level")
+
+[node name="GridMapWall" type="GridMap" parent="." unique_id=1100000207]
+mesh_library = ExtResource("17_meshlib")
+cell_size = Vector3(4, 4, 4)
+data = {
+"cells": PackedInt32Array(16, 6, 181, 18, 6, 189, 15, 6, 1048765, 18, 8, 1441987, 16, 7, 122, 17, 8, 298, 17, 9, 655539, 15, 9, 1441976, 15, 7, 1441981, 15, 8, 189, 18, 1, 307, 22, 9, 187, 23, 9, 655489, 22, 10, 1441983, 18, 9, 1441972, 15, 10, 1441972, 13, 8, 1048765, 13, 10, 655549, 13, 9, 1048755, 16, 9, 1048765, 16, 11, 655543, 15, 11, 655547, 18, 11, 655539, 16, 10, 655547, 17, 10, 183, 18, 10, 655540, 14, 8, 205, 14, 9, 155, 14, 10, 655553, 17, 11, 183, 19, 10, 655539, 19, 11, 655539, 20, 9, 1048763, 20, 11, 180, 22, 11, 1441981, 22, 12, 1441921, 21, 9, 179, 20, 12, 1441921, 20, 13, 1441921, 21, 14, 655489, 20, 14, 1048705, 20, 15, 1048705, 20, 16, 1048705, 21, 16, 129, 22, 16, 129, 24, 16, 129, 23, 16, 129, 24, 15, 1441921, 24, 14, 1441921, 24, 13, 1441921, 24, 11, 655489, 23, 11, 655489, 24, 9, 655489, 25, 9, 1048704, 25, 11, 1048705, 26, 11, 655488, 26, 12, 1048705, 26, 13, 1048705, 26, 14, 129, 23, 13, 229, 23, 14, 229, 22, 14, 227, 24, 12, 227, 25, 14, 227, 25, 13, 1442090, 25, 15, 1442090, 20, 10, 1441979, 17, 6, 183, 18, 7, 1441971, 21, 11, 655555, 25, 16, 655489, 26, 16, 655489, 27, 16, 655489, 27, 14, 1048705, 28, 16, 1048705, 29, 15, 655489, 29, 14, 1048705, 27, 13, 129, 29, 12, 129, 30, 13, 129, 30, 12, 129, 27, 11, 655489, 28, 11, 1048705, 32, 13, 1048705, 31, 14, 129, 31, 15, 1441921, 30, 16, 655489, 29, 17, 655489, 30, 17, 1048705, 31, 17, 129, 32, 17, 129, 33, 17, 129, 34, 16, 129, 34, 17, 129, 35, 16, 1441921, 35, 15, 1441921, 34, 13, 1441921, 35, 14, 1441921, 34, 12, 655489, 35, 13, 1048705, 32, 11, 129, 29, 9, 129, 33, 9, 1048705, 31, 10, 1441921, 31, 8, 1441921, 32, 8, 655489, 33, 8, 1048705, 34, 10, 129, 34, 11, 1441921, 27, 10, 1441921, 26, 8, 655489, 28, 8, 655489, 27, 8, 655489, 25, 8, 655489, 29, 8, 1048705)
+}
+
+[node name="GridMapFloor" type="GridMap" parent="." unique_id=2139386981]
+mesh_library = ExtResource("17_meshlib")
+cell_size = Vector3(4, 4, 4)
+data = {
+"cells": PackedInt32Array(17, 6, 1441895, 17, 8, 1441888, 18, 8, 1441895, 18, 7, 1441895, 17, 7, 1441895, 16, 7, 1441895, 16, 8, 1441895, 16, 9, 1441895, 17, 9, 1441895, 18, 9, 1441895, 18, 6, 1441895, 16, 6, 1441895, 15, 6, 1441895, 15, 7, 1441895, 15, 8, 1441895, 15, 9, 1441895, 20, 0, 103, 20, 1, 103, 20, 2, 103, 20, 3, 103, 20, 4, 103, 20, 5, 103, 20, 6, 103, 21, 6, 103, 20, 7, 103, 20, 8, 1048679, 20, 9, 1048679, 20, 10, 1048679, 20, 11, 1048679, 20, 12, 1048659, 20, 13, 1048659, 20, 14, 83, 20, 15, 83, 20, 16, 103, 21, 16, 82, 22, 16, 82, 23, 16, 82, 24, 16, 82, 25, 16, 83, 26, 16, 83, 27, 16, 103, 28, 16, 103, 29, 16, 103, 30, 16, 103, 31, 16, 103, 32, 16, 103, 33, 16, 103, 33, 15, 103, 33, 14, 103, 33, 13, 103, 33, 12, 103, 33, 11, 103, 33, 10, 103, 33, 9, 103, 33, 8, 103, 33, 7, 103, 33, 6, 103, 33, 5, 103, 33, 4, 103, 33, 3, 103, 33, 1, 103, 33, 0, 103, 33, 2, 103, 32, 1, 103, 32, 0, 103, 31, 0, 103, 30, 0, 103, 25, 0, 103, 24, 0, 103, 23, 0, 103, 22, 0, 103, 21, 0, 103, 26, 0, 103, 27, 0, 103, 28, 0, 103, 29, 0, 103, 21, 1, 103, 21, 2, 103, 21, 3, 103, 21, 4, 103, 21, 5, 103, 21, 7, 103, 21, 8, 1048679, 21, 9, 1048679, 21, 10, 1048679, 21, 11, 1048675, 21, 12, 82, 21, 13, 82, 21, 14, 83, 21, 15, 82, 22, 1, 103, 22, 2, 103, 22, 3, 103, 22, 4, 103, 22, 5, 103, 22, 6, 103, 22, 7, 103, 22, 8, 103, 22, 9, 103, 22, 10, 103, 22, 11, 83, 22, 12, 83, 22, 14, 82, 22, 15, 83, 23, 1, 103, 23, 2, 103, 23, 3, 103, 23, 4, 103, 23, 5, 103, 23, 6, 103, 23, 7, 103, 23, 8, 103, 23, 9, 103, 23, 10, 103, 23, 11, 83, 23, 12, 82, 23, 13, 83, 23, 14, 82, 23, 15, 82, 24, 1, 103, 24, 2, 103, 24, 3, 103, 24, 4, 103, 24, 5, 103, 24, 6, 103, 24, 7, 103, 24, 8, 103, 24, 9, 103, 24, 10, 103, 24, 11, 82, 24, 12, 83, 24, 13, 83, 24, 14, 83, 24, 15, 83, 25, 1, 103, 25, 2, 103, 25, 3, 103, 25, 4, 103, 25, 5, 103, 25, 6, 103, 25, 7, 103, 25, 8, 103, 25, 9, 103, 25, 10, 103, 25, 11, 83, 25, 12, 82, 25, 13, 82, 25, 14, 83, 25, 15, 83, 26, 1, 103, 26, 2, 103, 26, 3, 103, 26, 4, 103, 26, 5, 103, 26, 6, 103, 26, 7, 103, 26, 8, 103, 26, 9, 103, 26, 10, 103, 26, 11, 82, 26, 12, 83, 26, 13, 82, 26, 14, 83, 26, 15, 82, 27, 1, 103, 27, 2, 103, 27, 3, 103, 27, 4, 103, 27, 5, 103, 27, 6, 103, 27, 7, 103, 27, 8, 103, 27, 9, 103, 27, 10, 103, 27, 11, 103, 27, 12, 103, 27, 13, 103, 27, 14, 103, 27, 15, 103, 28, 1, 103, 28, 2, 103, 28, 3, 103, 28, 4, 103, 28, 5, 103, 28, 6, 103, 28, 7, 103, 28, 8, 103, 28, 9, 103, 28, 10, 103, 28, 11, 103, 28, 12, 103, 28, 13, 103, 28, 14, 103, 28, 15, 103, 29, 1, 103, 29, 2, 103, 29, 3, 103, 29, 4, 103, 29, 5, 103, 29, 6, 103, 29, 7, 103, 29, 8, 103, 29, 9, 103, 29, 10, 103, 29, 11, 103, 29, 12, 103, 29, 13, 103, 29, 14, 103, 29, 15, 103, 30, 1, 103, 30, 2, 103, 30, 3, 103, 30, 4, 103, 30, 5, 103, 30, 6, 103, 30, 7, 103, 30, 8, 103, 30, 9, 103, 30, 10, 103, 30, 11, 103, 30, 12, 103, 30, 13, 103, 30, 14, 103, 30, 15, 103, 31, 1, 103, 31, 2, 103, 31, 3, 103, 31, 4, 103, 31, 5, 103, 31, 6, 103, 31, 7, 103, 31, 8, 103, 31, 9, 103, 31, 10, 103, 31, 11, 103, 31, 12, 103, 31, 13, 103, 31, 14, 103, 31, 15, 103, 32, 2, 103, 32, 3, 103, 32, 4, 103, 32, 5, 103, 32, 6, 103, 32, 7, 103, 32, 8, 103, 32, 9, 103, 32, 10, 103, 32, 11, 103, 32, 12, 103, 32, 13, 103, 32, 14, 103, 32, 15, 103, 15, 10, 1441895, 16, 10, 1441895, 17, 10, 1441895, 18, 10, 1441895, 19, 10, 1441895, 19, 11, 1441895, 18, 11, 1441895, 17, 11, 1441895, 16, 11, 1441895, 15, 11, 1441895, 14, 11, 1441895, 14, 10, 1441895, 13, 10, 1441895, 13, 11, 1441895, 12, 10, 1441895, 12, 9, 1441895, 12, 8, 1441895, 13, 8, 1441895, 14, 8, 1441895, 13, 9, 1441895, 14, 9, 1441895, 12, 11, 1441895, 22, 13, 1048659)
+}
+metadata/_editor_floor_ = Vector3(0, -1, 0)
+
+[node name="GridUpper" type="GridMap" parent="." unique_id=1100000208]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4, 0)
+mesh_library = ExtResource("17_meshlib")
+cell_size = Vector3(4, 4, 4)
+data = {
+"cells": PackedInt32Array(17, 7, 1442004)
+}
+
+[node name="Character" type="CharacterBody3D" parent="." unique_id=1100000205]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 2.05, 34)
+script = ExtResource("16_ctrl")
+
+[node name="Rig_Medium_General" parent="Character" unique_id=1100000206 instance=ExtResource("15_rmg")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.5525303, 0, 0)
+
+[node name="Ranger" parent="Character" unique_id=1100000210 instance=ExtResource("28_ranger")]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Character" unique_id=1100000212]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CapsuleShape3D_character")
+
+[node name="FPSCamera" type="Camera3D" parent="Character" unique_id=1100000213]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.1498, -0.685)
+
+[node name="Rig_Medium" parent="Character/Rig_Medium_General" index="0"]
+visible = false
+
+[node name="AnimationPlayer" parent="Character/Rig_Medium_General" index="1"]
+root_node = NodePath("../../Ranger")
+
+[node name="stairs_walled2" parent="." unique_id=2018932901 instance=ExtResource("4_vkbyq")]
+transform = Transform3D(-4.3711385e-08, 0, 0.99999994, 0, 1, 0, -0.99999994, 0, -4.3711385e-08, 55.987926, 2.007141, 32.02777)
+
+[node name="trunk_large_A2" parent="." unique_id=403456910 instance=ExtResource("5_7jqyl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55.65007, 2.0429688, 35.080536)
+
+[node name="coin2" parent="." unique_id=1371219224 instance=ExtResource("6_m5ivw")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 57.381958, 3.074463, 39.68904)
+
+[node name="coin3" parent="." unique_id=131087617 instance=ExtResource("6_m5ivw")]
+transform = Transform3D(0.78051037, 0.6166845, -0.10248943, -0.6194561, 0.7850088, 0.0059607886, 0.08413099, 0.058835234, 0.9947163, 57.590088, 3.140747, 39.691055)
+
+[node name="table_small2" parent="." unique_id=1211093120 instance=ExtResource("7_sui6v")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56.890686, 1.9870338, 37.917995)
+
+[node name="table_small3" parent="." unique_id=893358259 instance=ExtResource("7_sui6v")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 57.913574, 1.9968185, 39.96364)
+
+[node name="table_small4" parent="." unique_id=197652501 instance=ExtResource("7_sui6v")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 58.79646, 1.7919922, 37.8869)
+
+[node name="ChainLink" type="MeshInstance3D" parent="." unique_id=1355241888]
+transform = Transform3D(2.7705054, 0, 0, 0, 3.8708253, 0, 0, 0, 1.8582709, 68.54556, 4.5914307, 38.332153)
+mesh = ExtResource("8_tv7ir")
+metadata/_edit_group_ = true
+
+[node name="ChainLink2" type="MeshInstance3D" parent="." unique_id=1198377631]
+transform = Transform3D(2.8822753, 0, 0, 0, 4.1524796, -0.13362761, 0, 0.2974096, 1.8657298, 69.77947, 4.782837, 38.465088)
+mesh = ExtResource("8_tv7ir")
+
+[node name="trunk_large_A3" parent="." unique_id=104626640 instance=ExtResource("5_7jqyl")]
+transform = Transform3D(-0.024535729, 0, 1.7235837, 0, 1.212991, 0, -1.7256879, 0, -0.02450581, 66.9978, 1.8800659, 40.05262)
+
+[node name="plate2" parent="." unique_id=1840475877 instance=ExtResource("9_kp5pi")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.64587, 2.0437012, 40.730247)
+
+[node name="banner_brown2" parent="." unique_id=688048514 instance=ExtResource("10_b7y0n")]
+transform = Transform3D(-0.9996109, 0, -0.027895164, 0, 1, 0, 0.027895164, 0, -0.9996109, 64.029274, 1.8666992, 45.91034)
+
+[node name="banner_brown4" parent="." unique_id=1930314215 instance=ExtResource("10_b7y0n")]
+transform = Transform3D(-0.99957466, 0, -0.02916186, 0, 1, 0, 0.02916186, 0, -0.99957466, 67.816536, 1.7490234, 45.999756)
+
+[node name="box_large2" parent="." unique_id=392394796 instance=ExtResource("11_v4yay")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 72.65442, 2.3145752, 39.36374)
+
+[node name="wall_doorway_Tsplit2" parent="." unique_id=2112702324 instance=ExtResource("12_xl7j7")]
+transform = Transform3D(-4.3711385e-08, 0, 0.99999994, 0, 1, 0, -0.99999994, 0, -4.3711385e-08, 78.01129, 2.0092163, 43.965805)
+
+[node name="shelves2" parent="." unique_id=478700040 instance=ExtResource("13_o0wo3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85.88504, 1.9530029, 37.917847)
+
+[node name="shelves3" parent="." unique_id=1017860933 instance=ExtResource("13_o0wo3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 84.09228, 1.9753418, 37.981567)
+
+[node name="keyring2" parent="." unique_id=893051025 instance=ExtResource("14_kdsbj")]
+transform = Transform3D(0.4199505, 0, 0, 0, 0.8658117, 0, 0, 0, 0.26452154, 85.230095, 3.113037, 38.510254)
+
+[node name="candle_thin_lit2" parent="." unique_id=1282461669 instance=ExtResource("15_ml0fe")]
+transform = Transform3D(0.5991188, 0, 0, 0, 0.4881524, 0.01137681, 0, -0.008527314, 0.6512741, 83.39056, 3.1941528, 38.484406)
+
+[node name="candle_thin_lit3" parent="." unique_id=1882442597 instance=ExtResource("15_ml0fe")]
+transform = Transform3D(0.7073245, 0, 0, 0, 0.4000693, 0, 0, 0, 0.56380534, 83.50455, 3.1551514, 38.57852)
+
+[node name="candle_thin_lit4" parent="." unique_id=892227480 instance=ExtResource("15_ml0fe")]
+transform = Transform3D(0.6282744, 0, 0, 0, 0.2121774, 0, 0, 0, 0.6601402, 83.35255, 3.1619873, 38.61194)
+
+[node name="Book1" type="MeshInstance3D" parent="." unique_id=1773096708]
+transform = Transform3D(-0.013482049, 0.999753, -0.017666738, -0.9998944, -0.013384137, 0.005649281, 0.0054114354, 0.01774104, 0.999828, 84.075935, 3.2146912, 38.51828)
+mesh = ExtResource("16_h74y2")
+
+[node name="Book2" type="MeshInstance3D" parent="." unique_id=1180051372]
+transform = Transform3D(-0.17858173, 0.98278224, 0.047407847, -0.98390615, -0.17806916, -0.014856848, -0.006159149, -0.049298063, 0.998765, 84.4657, 3.2533112, 38.50348)
+mesh = ExtResource("16_h74y2")
+
+[node name="bed_decorated2" parent="." unique_id=1298575108 instance=ExtResource("17_ml0fe")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71.59796, 2.0753174, 28.072021)
+
+[node name="coin_stack_small2" parent="." unique_id=1739066648 instance=ExtResource("18_h74y2")]
+transform = Transform3D(0.7534941, 0, 0, 0, 1.0369501, 0, 0, 0, 0.60353214, 86.15525, 3.1697998, 38.490845)
+
+[node name="bottle_A_brown2" parent="." unique_id=2141197382 instance=ExtResource("19_7cdnq")]
+transform = Transform3D(0.6472744, 0, 0, 0, 0.71722597, 0, 0, 0, 0.5293779, 83.542465, 4.709778, 38.58539)
+
+[node name="CarpetPlaneFlat" type="MeshInstance3D" parent="." unique_id=569890041]
+transform = Transform3D(1, 0, 0, 0, 33.68687, 0, 0, 0, 0.84435487, 69.99048, 2.0465088, 28.027027)
+mesh = ExtResource("20_lsj08")
+
+[node name="crates_stacked2" parent="." unique_id=1740143933 instance=ExtResource("21_u5n7q")]
+transform = Transform3D(0.96864057, 0, 0.24846615, 0, 1, 0, -0.24846615, 0, 0.96864057, 83.5979, 2.2896729, 55.8358)
+
+[node name="RChestGold" type="MeshInstance3D" parent="." unique_id=679971811]
+transform = Transform3D(1.581212, 0, 0, 0, 1.1409695, 0, 0, 0, 1.2769603, 103.88033, 2.0533447, 47.680237)
+mesh = ExtResource("22_qslh7")
+
+[node name="Cage1" type="MeshInstance3D" parent="." unique_id=1143378948]
+transform = Transform3D(1.0179214, 0, 0.5182658, 0, 1.0655421, 0, -0.86276895, 0, 0.6114661, 92.38133, 1.9422607, 48.110214)
+mesh = ExtResource("23_kdj2k")
+
+[node name="Cage" type="MeshInstance3D" parent="." unique_id=127793957]
+transform = Transform3D(0.93928057, 0, 0.34315008, 0, 1, 0, -0.34315008, 0, 0.93928057, 84.36717, 2.1834717, 63.84369)
+mesh = ExtResource("24_s1aav")
+
+[node name="Cage2" type="MeshInstance3D" parent="." unique_id=1119004625]
+transform = Transform3D(0.97633827, 0, 0.21624885, 0, 1, 0, -0.21624885, 0, 0.97633827, 87.798706, 2.1514893, 60.12288)
+mesh = ExtResource("24_s1aav")
+
+[node name="chest_gold2" parent="." unique_id=873439563 instance=ExtResource("25_xdahv")]
+transform = Transform3D(0.39909843, 0, 0.7125307, 0, 0.6666135, 0, -0.5578056, 0, 0.509801, 84.12024, 2.0408936, 59.842957)
+
+[node name="Crate2" type="MeshInstance3D" parent="." unique_id=1482626199]
+transform = Transform3D(2.0257492, 0, 1.0910519, 0, 1.8973565, 0, -2.1797798, 0, 1.0139543, 95.33429, 2.3917236, 63.64383)
+mesh = ExtResource("26_krw8e")
+
+[node name="rubble_large2" parent="." unique_id=1871074698 instance=ExtResource("27_h74y2")]
+transform = Transform3D(0.02196155, 0, -0.99975884, 0, 1, 0, 0.99975884, 0, 0.02196155, 91.26833, 2.0960693, 44.070618)
+
+[node name="rubble_large3" parent="." unique_id=1471924183 instance=ExtResource("27_h74y2")]
+transform = Transform3D(0.01333312, 0, -0.9999111, 0, 1, 0, 0.9999111, 0, 0.01333312, 91.43029, 2.6212158, 39.756653)
+
+[node name="GridCollision" type="Node" parent="." unique_id=1100000211]
+script = ExtResource("29_gridcol")
+
+[node name="Minecart" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 67.3, 2.05, 33)
+
+[node name="minecart" parent="Minecart" instance=ExtResource("30_minecart")]
+
+[node name="StaticBody3D" type="StaticBody3D" parent="Minecart"]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Minecart/StaticBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.003415, 0.476613, 0.000664)
+shape = SubResource("BoxShape3D_minecart")

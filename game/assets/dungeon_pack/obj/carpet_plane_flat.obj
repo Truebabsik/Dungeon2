@@ -1,0 +1,17 @@
+# Blender v2.81 (sub 16) OBJ File: 'dungeon_pack.blend'
+# www.blender.org
+mtllib carpet_plane_flat.mtl
+o carpet_plane_flat_Plane.001
+v -1.000000 0.007478 1.804682
+v 1.000000 0.007478 1.804682
+v -1.000000 0.007478 -1.804682
+v 1.000000 0.007478 -1.804682
+vt 0.000000 0.000000
+vt 1.000000 0.000000
+vt 1.000000 1.000000
+vt 0.000000 1.000000
+vn 0.0000 1.0000 0.0000
+g carpet_plane_flat_Plane.001_clothRed
+usemtl clothRed
+s off
+f 1/1/1 2/2/1 4/3/1 3/4/1

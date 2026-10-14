@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://dlfy8s1hn5n3m"
+path="res://.godot/imported/slab_bent_broken_half.obj-c9bbbade858624eba8ff35224d19d34b.mesh"
+
+[deps]
+
+files=["res://.godot/imported/slab_bent_broken_half.obj-c9bbbade858624eba8ff35224d19d34b.mesh"]
+
+source_file="res://assets/dungeon_pack/obj/slab_bent_broken_half.obj"
+dest_files=["res://.godot/imported/slab_bent_broken_half.obj-c9bbbade858624eba8ff35224d19d34b.mesh", "res://.godot/imported/slab_bent_broken_half.obj-c9bbbade858624eba8ff35224d19d34b.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false
