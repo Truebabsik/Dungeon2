@@ -22,12 +22,30 @@
 [ext_resource type="PackedScene" path="res://assets/props/stall_1024.glb" id="18_stall"]
 [ext_resource type="PackedScene" path="res://assets/props/wall-torch_1024.glb" id="19_torch"]
 [ext_resource type="Script" path="res://level/zones/portcullis.gd" id="20_portcullis"]
+[ext_resource type="Script" path="res://level/zones/lever.gd" id="21_lever"]
 
 ; Решётка ворот (T3): коробка коллизии — AABB меша в координатах узла Portcullis
 ; (локально x 0.641152, y 1.024630, z 0.064731; центр (0.002450, 0.512315, -0.000500)).
 ; Мировой AABB коробки совпадает с AABB меша: x 6.9476..7.0124, y 0..5.0002, z -1.905..1.905.
 [sub_resource type="BoxShape3D" id="box_portcullis"]
 size = Vector3(0.641152, 1.02463, 0.064731)
+
+; Зона действия рычага (T4). Задана в СИСТЕМЕ УЗЛА Lever, а не мира: у рычага масштаб 1.04,
+; поэтому локальные числа умножаются на него, и мировая коробка считается так:
+;   UseZone.position * 1.04 + (3.65, 0, 3.2) = мировой центр,
+;   UseZone-коробка * 1.04                      = мировой размер.
+; Отсюда (0.8, 1.0, 0.1) -> мир (4.482, 1.04, 3.304), а размер (1.8, 2.2, 1.7) -> (1.872, 2.288, 1.768).
+; Проверенная гейтом мировая коробка: x 3.546..5.418, y -0.104..2.184, z 2.420..4.188.
+;
+; Почему такой размер. Караулка тесная: стены GuardWallSouth/North/West (x 1.55..5.25,
+; z 1.95..5.25), а рычаг вплотную стоит к жаровне (меш рычага x 3.36..3.93, жаровня до x 3.17).
+; Зона смещена на восток — единственную открытую сторону, откуда игрок подходит к рычагу,
+; и начинается за краем стола (x = 3.48), чтобы не накрывать ни стол, ни жаровню: их
+; статические тела иначе оказались бы в Area3D. По z не доходит до GuardWallSouth
+; (стена заканчивается на z = 2.25, зона начинается на 2.42). По высоте низ уходит на
+; 0.10 м под пол, а верх 2.18 м — зона целиком накрывает капсулу игрока (1.8 м).
+[sub_resource type="BoxShape3D" id="box_lever_zone"]
+size = Vector3(1.8, 2.2, 1.7)
 
 [sub_resource type="BoxShape3D" id="box_brazier"]
 size = Vector3(0.922, 0.9, 0.9)
@@ -150,8 +168,19 @@ shape = SubResource("box_portcullis")
 [node name="Brazier" type="Node3D" parent="." unique_id=1923474707 instance=ExtResource("4_brazier")]
 transform = Transform3D(1.13, 0, 0, 0, 1.13, 0, 0, 0, 1.13, 2.7, 0, 2.9)
 
+; Рычаг (T4): геометрия инстанса не тронута, добавлены скрипт и зона действия.
+; Ссылка на решётку — от узла рычага на соседний Portcullis.
 [node name="Lever" type="Node3D" parent="." unique_id=2113255967 instance=ExtResource("5_lever")]
 transform = Transform3D(1.04, 0, 0, 0, 1.04, 0, 0, 0, 1.04, 3.65, 0, 3.2)
+script = ExtResource("21_lever")
+portcullis_path = NodePath("../Portcullis")
+use_zone_path = NodePath("UseZone")
+
+[node name="UseZone" type="Area3D" parent="Lever"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.8, 1, 0.1)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Lever/UseZone"]
+shape = SubResource("box_lever_zone")
 
 [node name="WeaponRack" type="Node3D" parent="." unique_id=799525301 instance=ExtResource("6_rack")]
 transform = Transform3D(1.02, 0, 0, 0, 1.02, 0, 0, 0, 1.02, 2.15, 0, 4.4)

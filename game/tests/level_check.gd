@@ -145,6 +145,26 @@ const PORTCULLIS_PUSH_FRAMES := 90
 const PORTCULLIS_MIN_TRAVEL := 1.0     # капсула должна реально ехать, а не стоять на месте
 const PORTCULLIS_PASSED_X := 6.5       # прошёл: за лбом породы (x = 6.8) и центром арки (x = 6.5)
 
+# Рычаг (T4). Зона действия — Area3D UseZone под узлом Lever; проверяется и габарит зоны,
+# и то, что она РЕАЛЬНО ловит капсулу (get_overlapping_bodies), а не только что try_use()
+# вызывается руками. Точки стояния — в координатах корня зоны; y = 0.05 подобран так же,
+# как PORTCULLIS_START: начало узла Character — НИЗ капсулы (капсула растёт вверх на 1.8 м).
+# LEVER_STAND — в 0.7 м к востоку от рычага: это единственный открытый подход в караулку
+# (стены с трёх сторон, GuardWallSouth/North обрываются на x = 4.05/4.3), а сам рычаг
+# стоит вплотную к жаровне (меш рычага x 3.36..3.93, жаровня кончается на x = 3.17).
+const LEVER_NODE := "Lever"
+const LEVER_ZONE := "UseZone"
+const LEVER_SCRIPT_PATH := "res://level/zones/lever.gd"
+const LEVER_KEY_CALL := "is_physical_key_pressed(KEY_E)"
+const LEVER_STAND := Vector3(4.4, 0.05, 3.2)     # у рычага: зона обязана накрывать
+const LEVER_TUNNEL := Vector3(6.3, 0.05, 0.0)    # тоннель у ворот: зона обязана НЕ накрывать
+const LEVER_YARD := Vector3(11.0, 0.05, 0.0)      # MerchantSpot во дворе: то же самое
+const LEVER_ZONE_HALF_MIN := 0.7                 # уже — игрок в зону не попадёт
+const LEVER_ZONE_HALF_MAX := 1.25                # шире — рычаг сработает «через всю караулку»
+const LEVER_ZONE_FLOOR_MAX := 0.1                # низ зоны у пола: капсула должна входить целиком
+const LEVER_ZONE_SETTLE_FRAMES := 4              # кадров на обновление Area3D после переноса капсулы
+const LEVER_HOLD_FRAMES := 20                    # столько кадров «удержания» E проверяем
+
 # Двор T2r-b2: статуя основателя, торговая палатка, настенный факел (design.md:62-63, :69, :77).
 # Ассеты — выбранные пользователем модели Hunyuan (plan.md:58-60); проверка подмены ассета
 # защищает от молчаливой замены меша под тем же именем узла.
@@ -896,6 +916,30 @@ func check_gate_entrance() -> void:
 	root.remove_child(zone)
 	zone.free()
 
+	# Рычаг (T4) проверяется на СВОЕМ экземпляре зоны, а не на этом же: он тоже поднимает
+	# решётку, и общий инстанс связал бы две механики порядком вызовов (кто первый поднял —
+	# тот и виноват). Свой экземпляр начинает с гарантированно закрытой решётки.
+	await check_lever_zone_instance()
+
+
+# Отдельный экземпляр зоны для проверки рычага.
+func check_lever_zone_instance() -> void:
+	var packed := load(GATE_SCENE) as PackedScene
+	if packed == null:
+		failed += 1
+		print("ПРОВАЛ рычаг: сцена зоны не загрузилась для отдельного экземпляра: %s" % GATE_SCENE)
+		return
+	var zone := packed.instantiate() as Node3D
+	if zone == null:
+		failed += 1
+		print("ПРОВАЛ рычаг: сцена зоны не инстанцировалась для отдельного экземпляра")
+		return
+	root.add_child(zone)
+	await process_frame
+	await check_gate_lever(zone)
+	root.remove_child(zone)
+	zone.free()
+
 
 # Все узлы зоны на месте; караулка и ход внутрь — коробки и маркер будущего хода.
 func check_gate_nodes(zone: Node) -> void:
@@ -1120,6 +1164,289 @@ func push_capsule(zone: Node, frames: int) -> Vector3:
 	zone.remove_child(body)
 	body.free()
 	return end
+
+
+# Капсула игрока для пробы зоны рычага: тот же размер, что у персонажа уровня, и то же
+# соглашение — начало узла это НИЗ капсулы, поэтому точка стояния задаётся низом, а тело
+# растёт вверх на PORTCULLIS_CAPSULE_HEIGHT. Скорость не гасится (см. check_movement):
+# капсула стоит на месте и не участвует в движении.
+func spawn_probe_capsule(zone: Node, at: Vector3) -> CharacterBody3D:
+	var body := CharacterBody3D.new()
+	body.name = "LeverProbeCapsule"
+	var shape := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = PORTCULLIS_CAPSULE_RADIUS
+	capsule.height = PORTCULLIS_CAPSULE_HEIGHT
+	shape.shape = capsule
+	shape.position = Vector3(0.0, PORTCULLIS_CAPSULE_HEIGHT * 0.5, 0.0)
+	body.add_child(shape)
+	zone.add_child(body)
+	body.global_position = at
+	body.velocity = Vector3.ZERO
+	return body
+
+
+func drop_probe_capsule(zone: Node, body: Node) -> void:
+	zone.remove_child(body)
+	(body as Node).free()
+
+
+# Переставить капсулу и дождаться, пока Area3D пересчитает пересечения.
+func move_probe_capsule(body: CharacterBody3D, at: Vector3) -> void:
+	body.global_position = at
+	body.velocity = Vector3.ZERO
+
+
+# Рычаг (T4): скрипт, зона действия, физическая клавиша E, одно срабатывание.
+func check_gate_lever(zone: Node) -> void:
+	check_lever_setup(zone)
+	await check_lever_mechanics(zone)
+
+
+# Статическая часть рычага: скрипт lever.gd с try_use, Area3D зоны действия нужного
+# габарита, portcullis_path, ведущий на Portcullis, и физическая клавиша E в исходнике.
+func check_lever_setup(zone: Node) -> void:
+	var lever := zone.get_node_or_null(LEVER_NODE)
+	var portcullis := zone.get_node_or_null("Portcullis")
+	var bad: Array[String] = []
+	if lever == null or not (lever is Node3D):
+		failed += 1
+		print("ПРОВАЛ рычаг: нет узла %s" % LEVER_NODE)
+		return
+	var script: Variant = (lever as Node3D).get_script()
+	if script == null or script.resource_path != LEVER_SCRIPT_PATH:
+		bad.append("скрипт %s, ожидался %s" % [str(script.resource_path) if script != null else "нет", LEVER_SCRIPT_PATH])
+	elif not (lever as Node3D).has_method("try_use"):
+		bad.append("в %s нет метода try_use" % LEVER_SCRIPT_PATH)
+
+	var zone_node := (lever as Node3D).get_node_or_null(LEVER_ZONE)
+	if zone_node == null or not (zone_node is Area3D):
+		bad.append("нет узла зоны действия %s/%s типа Area3D" % [LEVER_NODE, LEVER_ZONE])
+	elif not zone_node.monitoring:
+		bad.append("зона %s/%s не наблюдает тела (monitoring выключен)" % [LEVER_NODE, LEVER_ZONE])
+	else:
+		bad.append_array(lever_zone_size_bad(zone_node as Area3D))
+
+	var path: Variant = (lever as Node3D).get("portcullis_path")   # null, если скрипта нет
+	if path == null or (path as NodePath).is_empty():
+		bad.append("не задан экспорт portcullis_path")
+	elif (lever as Node3D).get_node_or_null(path) != portcullis:
+		bad.append("portcullis_path %s ведёт не на Portcullis" % str(path))
+
+	bad.append_array(lever_key_bad())
+
+	if bad.is_empty():
+		print("ok: рычаг: скрипт %s, зона %s, portcullis_path %s, клавиша %s"
+			% [LEVER_SCRIPT_PATH, lever_zone_desc(zone_node as Area3D), str(path), LEVER_KEY_CALL])
+	else:
+		failed += 1
+		print("ПРОВАЛ рычаг (устройство): %s" % "; ".join(bad))
+
+
+# Габарит зоны действия: накрывает место стояния, но не всю караулку, и по высоте
+# достаёт от пола до макушки капсулы. Меряется по мировой коробке зоны (в координатах
+# корня зоны), потому что UseZone смещена относительно рычага.
+func lever_zone_size_bad(zone_node: Area3D) -> Array[String]:
+	var bad: Array[String] = []
+	var box := zone_world_box(zone_node)
+	if box.size.x <= 0.0 or box.size.z <= 0.0 or box.size.y <= 0.0:
+		return ["зона %s без формы (мировая коробка %s)" % [LEVER_ZONE, str(box)]]
+	for axis in [box.size.x, box.size.z]:
+		var half: float = axis * 0.5
+		if half < LEVER_ZONE_HALF_MIN or half > LEVER_ZONE_HALF_MAX:
+			bad.append("половина зоны по XZ %.2f м вне %.2f-%.2f" % [half, LEVER_ZONE_HALF_MIN, LEVER_ZONE_HALF_MAX])
+	if box.position.y > LEVER_ZONE_FLOOR_MAX:
+		bad.append("низ зоны y %.2f: капсула в зону снизу не встанет" % box.position.y)
+	if box.end.y < PORTCULLIS_CAPSULE_HEIGHT:
+		bad.append("верх зоны y %.2f ниже роста капсулы %.2f" % [box.end.y, PORTCULLIS_CAPSULE_HEIGHT])
+	return bad
+
+
+# Коробка зоны в МИРОВЫХ координатах, в системе корня сцены-зоны (зона в дереве, а её
+# масштаб несёт узел Lever — 1.04, поэтому transform относительно родителя не годится).
+func zone_world_box(zone_node: Area3D) -> AABB:
+	var shape_node: CollisionShape3D = null
+	for child in zone_node.get_children():
+		if child is CollisionShape3D and (child as CollisionShape3D).shape != null:
+			shape_node = child
+			break
+	if shape_node == null:
+		return AABB()
+	var xf := zone_node.global_transform * shape_node.transform
+	if shape_node.shape is BoxShape3D:
+		var size: Vector3 = (shape_node.shape as BoxShape3D).size
+		return xf * AABB(-size * 0.5, size)
+	return AABB(shape_node.global_position - Vector3.ONE, Vector3(2.0, 2.0, 2.0))
+
+
+func lever_zone_desc(zone_node: Area3D) -> String:
+	var box := zone_world_box(zone_node)
+	return "%s (%.2f x %.2f x %.2f м, пол %.2f..%.2f)" % [LEVER_ZONE, box.size.x, box.size.y, box.size.z, box.position.y, box.end.y]
+
+
+# Клавиша взаимодействия — ФИЗИЧЕСКАЯ E (AGENTS.md), и не через событие _input. В headless
+# состояние клавиши нельзя подделать: проба (temp/t4_probe.txt) показала, что
+# Input.parse_input_event не меняет Input.is_physical_key_pressed — ни с одним
+# сочетанием keycode/physical_keycode. Поэтому требование проверяется по исходнику скрипта:
+# это единственный способ не оставить клавишу непроверенной вовсе.
+func lever_key_bad() -> Array[String]:
+	var bad: Array[String] = []
+	if not FileAccess.file_exists(LEVER_SCRIPT_PATH):
+		return ["файла скрипта нет: %s" % LEVER_SCRIPT_PATH]
+	var src := FileAccess.get_file_as_string(LEVER_SCRIPT_PATH)
+	if not src.contains(LEVER_KEY_CALL):
+		bad.append("в %s нет вызова %s" % [LEVER_SCRIPT_PATH, LEVER_KEY_CALL])
+	if src.contains("is_key_pressed("):
+		bad.append("в %s есть логическая is_key_pressed(" % LEVER_SCRIPT_PATH)
+	if src.contains("_unhandled_input") or src.contains("func _input("):
+		bad.append("в %s клавиша читается через событие _input, а не опросом" % LEVER_SCRIPT_PATH)
+	return bad
+
+
+# Механика рычага. Проба идёт ПО ЦЕПОЧКЕ: пересечение капсулы с Area3D -> body_entered ->
+# флаг «игрок в зоне» -> опрос физической клавиши (фронт нажатия) -> try_use() -> Portcullis.open().
+# Клавишу в headless подделать нельзя (temp/t4_probe.txt), поэтому на время пробы рычагу
+# отключён СВОЙ опрос ввода, а состояние клавиши передаётся аргументом poll_interaction.
+# Без отключения проба врала бы: между её шагами идут await physics_frame, за них рычаг
+# опрашивал бы настоящий Input (в headless он всегда отпущен) и каждый раз «отпускал»
+# зажатую клавишу — фронт нажатия слезал бы и удержание выглядело бы ненажатием.
+# Приём тот же, что в check_movement: клавиатуру игнорируем, логику гоняем сами.
+func check_lever_mechanics(zone: Node) -> void:
+	var lever := zone.get_node_or_null(LEVER_NODE)
+	var portcullis := zone.get_node_or_null("Portcullis")
+	var zone_node := zone.get_node_or_null(LEVER_NODE + "/" + LEVER_ZONE)
+	if lever == null or portcullis == null or zone_node == null:
+		failed += 1
+		print("ПРОВАЛ рычаг (механика не проверялась): нет узлов %s, Portcullis или %s/%s"
+			% [LEVER_NODE, LEVER_NODE, LEVER_ZONE])
+		return
+	var missing: Array[String] = []
+	if not lever.has_method("try_use") or not lever.has_method("poll_interaction"):
+		missing.append("нет try_use()/poll_interaction()")
+	# Проба обязана начинаться с закрытой решётки: иначе подъём на open_height неотличим
+	# от «уже поднята», и проверка прошла бы вхолостую (дефект, найденный в T3-д).
+	if portcullis.is_open():
+		missing.append("решётка уже открыта на входе пробы: y %.4f" % portcullis.position.y)
+	if not missing.is_empty():
+		failed += 1
+		print("ПРОВАЛ рычаг (механика не проверялась): %s" % "; ".join(missing))
+		return
+
+	var closed_y: float = portcullis.position.y
+	print("info: рычаг: вход в пробу — решётка закрыта на y %.4f, is_open() %s" % [closed_y, str(portcullis.is_open())])
+	lever.set_physics_process(false)
+	var capsule := spawn_probe_capsule(zone, LEVER_TUNNEL)
+	await physics_frame
+	await physics_frame
+
+	# 1. Вне зоны try_use() ничего не делает.
+	var outside = lever.try_use(false)
+	if outside == false and portcullis.position.y == closed_y and not portcullis.is_open():
+		print("ok: рычаг вне зоны: try_use(false) -> false, решётка на y %.4f не двинулась" % closed_y)
+	else:
+		failed += 1
+		print("ПРОВАЛ рычаг вне зоны: try_use(false) -> %s, решётка y %.4f (было %.4f)" % [str(outside), portcullis.position.y, closed_y])
+
+	# 2. Зона не накрывает тоннель у ворот, и удержание E вне зоны ничего не делает.
+	#    Про статические тела в зоне (порода, стены) в счёт не идут: важно лишь, где КАПСУЛА.
+	var in_tunnel: Array = await wait_overlaps(zone_node, capsule)
+	if not in_tunnel.has(capsule):
+		print("ok: зона не накрывает тоннель: капсула на (%.2f, %.2f, %.2f) вне %s (тела в зоне: %s)"
+			% [LEVER_TUNNEL.x, LEVER_TUNNEL.y, LEVER_TUNNEL.z, LEVER_ZONE, body_names(in_tunnel)])
+	else:
+		failed += 1
+		print("ПРОВАЛ зона рычага накрывает тоннель: капсула на (%.2f, %.2f, %.2f) попала в %s" % [LEVER_TUNNEL.x, LEVER_TUNNEL.y, LEVER_TUNNEL.z, LEVER_ZONE])
+	lever.poll_interaction(true)   # игрок ДЕРЖИТ E, стоя в тоннеле
+	if not portcullis.is_open() and lever.used == false:
+		print("ok: удержание E вне зоны: решётка закрыта, used == false")
+	else:
+		failed += 1
+		print("ПРОВАЛ удержание E вне зоны сработало: is_open() %s, used %s" % [str(portcullis.is_open()), str(lever.used)])
+
+	# 3. Капсула реально попадает в зону; E всё ещё зажата с прошлого шага — вход в зону
+	#    не должен «дозарядить» рычаг (фронт нажатия был ДО входа в зону).
+	move_probe_capsule(capsule, LEVER_STAND)
+	var in_zone: Array = await wait_overlaps(zone_node, capsule)
+	if in_zone.has(capsule):
+		print("ok: зона рычага ловит капсулу: тело в %s на (%.2f, %.2f, %.2f), зона %s"
+			% [LEVER_ZONE, LEVER_STAND.x, LEVER_STAND.y, LEVER_STAND.z, lever_zone_desc(zone_node)])
+	else:
+		failed += 1
+		print("ПРОВАЛ зона рычага не поймала капсулу: тело на (%.2f, %.2f, %.2f) вне %s" % [LEVER_STAND.x, LEVER_STAND.y, LEVER_STAND.z, LEVER_ZONE])
+	lever.poll_interaction(true)   # E всё ещё нажата: это «удержание», а не нажатие
+	if not lever.used and not portcullis.is_open():
+		print("ok: вход в зону на зажатой E не срабатывает: used == false, решётка закрыта")
+	else:
+		failed += 1
+		print("ПРОВАЛ вход в зону на зажатой E сработал: used %s, is_open() %s" % [str(lever.used), str(portcullis.is_open())])
+
+	# 4. Отпустил и нажал в зоне — решётка поднимается.
+	lever.poll_interaction(false)
+	var fired = lever.poll_interaction(true)
+	if fired and lever.used:
+		print("ok: нажатие E в зоне: poll_interaction(true) -> true, used == true")
+	else:
+		failed += 1
+		print("ПРОВАЛ нажатие E в зоне: poll_interaction(true) -> %s, used %s" % [str(fired), str(lever.used)])
+	var frames := 0
+	while frames < PORTCULLIS_RAISE_FRAME_CAP and not portcullis.is_open():
+		await physics_frame
+		frames += 1
+	var raised: float = portcullis.position.y - closed_y
+	if portcullis.is_open() and absf(raised - PORTCULLIS_OPEN_HEIGHT) <= GATE_BOX_EPS:
+		print("ok: рычаг поднял решётку на %.2f м за %d физ. кадров, is_open() == true" % [raised, frames])
+	else:
+		failed += 1
+		print("ПРОВАЛ рычаг не поднял решётку: подъём на %.2f м (нужно %.2f), is_open() %s, ждал %d физ. кадров"
+			% [raised, PORTCULLIS_OPEN_HEIGHT, str(portcullis.is_open()), frames])
+	portcullis.position.y = closed_y + raised   # решение is_open() — по position, не по флагу
+
+	# 5. Рычаг уже использован: ни удержание E, ни повторный try_use() ничего не делают.
+	for i in LEVER_HOLD_FRAMES:
+		lever.poll_interaction(true)
+	await physics_frame
+	var repeat = lever.try_use(true)
+	var again = lever.try_use(false)
+	if not repeat and not again and absf(portcullis.position.y - (closed_y + raised)) <= POSITION_EPS:
+		print("ok: повтор не срабатывает: удержание E %d кадров, try_use(true) -> false, try_use(false) -> false, решётка осталась на подъёме %.2f м"
+			% [LEVER_HOLD_FRAMES, raised])
+	else:
+		failed += 1
+		print("ПРОВАЛ повторное срабатывание: try_use(true) -> %s, try_use(false) -> %s, решётка y %.4f (ожидалась %.4f)"
+			% [str(repeat), str(again), portcullis.position.y, closed_y + raised])
+
+	# 6. Зона не накрывает двор: капсулу уносят к MerchantSpot.
+	move_probe_capsule(capsule, LEVER_YARD)
+	var in_yard: Array = await wait_overlaps(zone_node, capsule)
+	if not in_yard.has(capsule):
+		print("ok: зона не накрывает двор: капсула на (%.2f, %.2f, %.2f) вне %s (тела в зоне: %s)"
+			% [LEVER_YARD.x, LEVER_YARD.y, LEVER_YARD.z, LEVER_ZONE, body_names(in_yard)])
+	else:
+		failed += 1
+		print("ПРОВАЛ зона рычага накрывает двор: капсула на (%.2f, %.2f, %.2f) попала в %s" % [LEVER_YARD.x, LEVER_YARD.y, LEVER_YARD.z, LEVER_ZONE])
+
+	drop_probe_capsule(zone, capsule)
+	lever.set_physics_process(true)
+	portcullis.position.y = closed_y
+
+
+# Имена тел, пересекающих зону, — для info-строк: важно знать, ЧТО именно попало в зону
+# (капсула игрока или стена караулки), а не только сколько.
+func body_names(bodies: Array) -> String:
+	var names: Array[String] = []
+	for body in bodies:
+		names.append(str(body.name))
+	if names.is_empty():
+		return "нет"
+	names.sort()   # get_overlapping_bodies() не обещает порядок, а лог должен быть детерминирован
+	return ", ".join(names)
+
+
+# Тела, пересекающие Area3D, после LEVER_ZONE_SETTLE_FRAMES физических кадров.
+func wait_overlaps(zone_node: Area3D, body: CharacterBody3D) -> Array:
+	for i in LEVER_ZONE_SETTLE_FRAMES:
+		await physics_frame
+	return zone_node.get_overlapping_bodies()
 
 
 # Решётка не врезана в коллизии зоны: её AABB не пересекает ни один StaticBody3D
