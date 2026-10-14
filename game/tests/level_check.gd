@@ -202,6 +202,36 @@ const VIEW_SIGHT_EPS := 0.05          # попадание в породу бл�
 const VIEW_SAMPLES := 24              # выборка вершин меша для лучей (детерминированная)
 const TORCH_SAMPLES := 8              # у факела силуэт и так читается его AABB
 
+# Освещение зоны входа (T5, design.md:68-74). Проверяются не «лампочки», а согласованность
+# света с ВЫРЕЗАННОЙ геометрией: холодный источник обязан стоять под своим колодцем (а не
+# в сплошной породе над ним) и доставать до пола, тёплый — гореть в жаровне, конус-луч —
+# стоять под тем же колодцем и дойти до пола.
+#
+# Положения шахт — те же формулы, что у check_cave_wells, но в МИРОВЫХ координатах Godot:
+# центр зала (0, 0), wz = -rho*sin(phi) (смена знака при переходе Blender Y -> Godot Z),
+# радиус CAVE_WELL_RHO = 2.6, азимуты CAVE_WELL_PHIS. Замеренные края отверстий (T5-проба):
+# разрыв потолка r 1.80..3.15 (азимут 90), 1.90..3.20 (210), 1.95..3.25 (330), ширина ~1.4 м,
+# высота свода у края 6.06-6.12 м.
+const WELL_LIGHT_Y_MIN := 4.0         # холодный зала: высоко (над головой), но под шахтой
+const WELL_LIGHT_Y_MAX := 6.05        # ... и не выше края свода: иначе свет внутри породы
+const WELL_LIGHT_XZ_TOL := 0.35       # центр источника — центр своего колодца
+const WELL_RIM_Y := 6.0               # кромка конуса-луча должна быть под сводом
+const BEAM_FOOT_Y_MAX := 0.35         # низ конуса — у пола, иначе луч висит в воздухе
+# Шахта двора (T5-проба): дыра в потолке x 9.40..12.55, z -1.55..1.55 при потолке 7.0.
+const YARD_SHAFT_X := 11.0
+const YARD_SHAFT_Z := 0.0
+const YARD_SHAFT_XZ_TOL := 0.5
+const YARD_CEILING_Y := 7.0
+const YARD_LIGHT_Y_MIN := 4.0         # холодный двора: между полом и потолком двора
+# Цвет делит свет на холодный (небесный из шахты) и тёплый (огонь) — сравнением каналов.
+const COLD_CHANNEL_GAP := 0.02        # у холодного синий заметно сильнее красного
+const WARM_CHANNEL_GAP := 0.02        # у тёплого наоборот
+const BEAM_ALPHA_MIN := 0.04          # «малая альфа» конуса-луча (design.md:72)
+const BEAM_ALPHA_MAX := 0.25
+const BRAZIER_NODE := "Brazier"
+const TORCH_NODE := "WallTorch"
+const TORCH_LIGHT_XZ_TOL := 0.7        # огонь факела — у кронштейна, не в углу двора
+
 var failed := 0
 # Треугольники породы для проверок зоны (лучи видимости); наполняется в check_cave_shell,
 # иначе читается напрямую из CAVE_GLB_PATH — проверка зоны не зависит от порядка вызовов.
@@ -908,6 +938,7 @@ func check_gate_entrance() -> void:
 	check_gate_cave_collision(zone)
 	check_gate_yard(zone)
 	check_gate_yard_props(zone)
+	check_gate_lighting(zone)
 	# Механика решётки — последняя: она двигает Portcullis вверх, а мерки AABB выше
 	# (перекрытие проёма, верх решётки под перемычкой) считают решётку закрытой.
 	root.add_child(zone)
@@ -1832,6 +1863,331 @@ func check_gate_torch(zone: Node) -> void:
 	else:
 		failed += 1
 		print("ПРОВАЛ факел: %s" % "; ".join(bad))
+
+
+# Освещение зоны (T5): источники и конусы-лучи соответствуют вырезанной геометрии.
+func check_gate_lighting(zone: Node) -> void:
+	var lights := collect_lights(zone, [] as Array)
+	if lights.is_empty():
+		failed += 1
+		print("ПРОВАЛ в зоне нет ни одного источника света")
+	# Остальные проверки выполняются даже при пустом списке: иначе «нет света вообще»
+	# гасил бы их одним провалом, и они ни разу не показали бы своей чувствительности.
+	check_light_energy(lights)
+	check_well_lights(lights)
+	check_yard_light(lights)
+	check_brazier_light(zone, lights)
+	check_torch_light(zone, lights)
+	check_beam_cones(zone)
+	check_zone_fog(zone)
+
+
+# Все Light3D поддерева в порядке дерева (детерминизм, constraints.md §1.6).
+func collect_lights(node: Node, out: Array) -> Array:
+	if node is Light3D:
+		out.append(node)
+	for child in node.get_children():
+		collect_lights(child, out)
+	return out
+
+
+# Источник есть, а света нет: энергия 0 — лампа, которую выключили. Проверяются ВСЕ
+# источники зоны, чтобы новый свет нельзя было добавить «на автомате» погашенным.
+func check_light_energy(lights: Array) -> void:
+	if lights.is_empty():
+		return
+	var dead: Array[String] = []
+	for light in lights:
+		var energy: float = (light as Light3D).light_energy
+		if energy <= 0.0:
+			dead.append("%s (%.2f)" % [light.name, energy])
+	if dead.is_empty():
+		print("ok: источников света %d, у всех ненулевая энергия" % lights.size())
+	else:
+		failed += 1
+		print("ПРОВАЛ у источников нулевая энергия: %s" % ", ".join(dead))
+
+
+# Холодный свет зала: по источнику на каждый колодец, строго под своим отверстием.
+# Лампа в породе над сводом или сбоку от шахты свет бы не дала, поэтому проверяются
+# и высота, и положение по XZ.
+func check_well_lights(lights: Array) -> void:
+	var bad: Array[String] = []
+	var found: Array[String] = []
+	for phi in CAVE_WELL_PHIS:
+		var centre := well_ground_centre(phi)
+		var hit: Variant = null
+		var cold_seen := 0
+		for light in lights:
+			if not is_cold_light(light):
+				continue
+			cold_seen += 1
+			var p: Vector3 = world_position_of(light as Node3D)
+			# Сначала положение по XZ, потом высота: лампа над ДРУГИМ колодцем (или во дворе)
+			# не должна попадать в этот чек и рушить его высотой.
+			if Vector2(p.x, p.z).distance_to(centre) > WELL_LIGHT_XZ_TOL:
+				continue
+			if p.y < WELL_LIGHT_Y_MIN or p.y > WELL_LIGHT_Y_MAX:
+				bad.append("холодный %s на y %.2f вне %.2f-%.2f (под шахтой должен быть)"
+					% [light.name, p.y, WELL_LIGHT_Y_MIN, WELL_LIGHT_Y_MAX])
+				continue
+			if not points_down(light):
+				bad.append("%s светит не вниз (свет из шахты падает на пол)" % light.name)
+				continue
+			hit = "%s y %.2f" % [light.name, p.y]
+		if hit == null:
+			bad.append("нет холодного источника над колодцем (%.2f, %.2f), азимут %.0f" % [centre.x, centre.y, phi])
+		else:
+			found.append("азимут %.0f -> %s" % [phi, hit])
+		if cold_seen == 0:
+			bad.append("в зоне нет холодного света вовсе")
+	if bad.is_empty():
+		print("ok: холодный свет зала: %d/%d колодцев освещены (%s)"
+			% [found.size(), CAVE_WELL_PHIS.size(), ", ".join(found)])
+	else:
+		failed += 1
+		print("ПРОВАЛ холодный свет зала: %s" % "; ".join(bad))
+
+
+# Холодный свет двора: одна крупная шахта над статуей (design.md:68). Источник обязан быть
+# под потолком двора (YARD_CEILING_Y) и над статуей — иначе это не «столб над статуей».
+func check_yard_light(lights: Array) -> void:
+	var bad: Array[String] = []
+	var hit: Variant = null
+	for light in lights:
+		if not is_cold_light(light):
+			continue
+		var p: Vector3 = world_position_of(light as Node3D)
+		if p.x < CAVE_YARD_WALL_X or p.x > CAVE_YARD_FAR_X:
+			continue
+		if Vector2(p.x, p.z).distance_to(Vector2(YARD_SHAFT_X, YARD_SHAFT_Z)) > YARD_SHAFT_XZ_TOL:
+			continue
+		if p.y < YARD_LIGHT_Y_MIN or p.y > YARD_CEILING_Y:
+			bad.append("холодный %s на y %.2f вне %.2f-%.2f (столб света двора)"
+				% [light.name, p.y, YARD_LIGHT_Y_MIN, YARD_CEILING_Y])
+			continue
+		if not points_down(light):
+			bad.append("%s светит не вниз (столб света двора)" % light.name)
+			continue
+		hit = "%s на (%.2f, %.2f, %.2f), энергия %.1f" % [light.name, p.x, p.y, p.z, (light as Light3D).light_energy]
+	if hit == null:
+		bad.append("нет холодного источника над статуей (%.1f, %.1f)" % [YARD_SHAFT_X, YARD_SHAFT_Z])
+	if bad.is_empty():
+		print("ok: холодный свет двора: столб над статуей — %s" % hit)
+	else:
+		failed += 1
+		print("ПРОВАЛ холодный свет двора: %s" % "; ".join(bad))
+
+
+# Тёплый свет у жаровни: огонь горит В чаше, то есть ниже верхней кромки жаровни
+# (её AABB) и рядом с ней по XZ. Проверяется по фактическому AABB меша жаровни, а не
+# по константе: жаровня приезжает инстансом с масштабом 1.13.
+func check_brazier_light(zone: Node, lights: Array) -> void:
+	var brazier := zone.get_node_or_null(BRAZIER_NODE) as Node3D
+	if brazier == null:
+		failed += 1
+		print("ПРОВАЛ нет узла %s, а тёплый свет у него искать негде" % BRAZIER_NODE)
+		return
+	var box := prop_world_aabb(brazier)
+	var centre := world_position_of(brazier)
+	var bad: Array[String] = []
+	var hit: Variant = null
+	for light in lights:
+		if not is_warm_light(light):
+			continue
+		var p: Vector3 = world_position_of(light as Node3D)
+		if Vector2(p.x, p.z).distance_to(Vector2(centre.x, centre.z)) > GATE_BOX_EPS + 0.2:
+			continue
+		if p.y > box.end.y or p.y <= 0.0:
+			bad.append("тёплый %s на y %.2f вне чаши жаровни (0 < y <= %.2f)" % [light.name, p.y, box.end.y])
+			continue
+		hit = "%s на (%.2f, %.2f, %.2f) в чаше (верх %.2f), энергия %.1f" % [light.name, p.x, p.y, p.z, box.end.y, (light as Light3D).light_energy]
+	if hit == null:
+		bad.append("нет тёплого источника у жаровни (%.2f, %.2f)" % [centre.x, centre.z])
+	if bad.is_empty():
+		print("ok: тёплый свет жаровни: %s" % hit)
+	else:
+		failed += 1
+		print("ПРОВАЛ тёплый свет жаровни: %s" % "; ".join(bad))
+
+
+# Огонь настенного факела (design.md:69 «тёплые факелы на стенах двора — контраст»):
+# решение T5 — факел ТОЖЕ светит, но слабым тёплым источником у самого кронштейна
+# (в вертикали его AABB), а не отдельным пятном в углу двора. Проверка фиксирует именно
+# это решение: без неё «факел не светит» вернулось бы молча.
+func check_torch_light(zone: Node, lights: Array) -> void:
+	var torch := zone.get_node_or_null(TORCH_NODE) as Node3D
+	if torch == null:
+		failed += 1
+		print("ПРОВАЛ нет узла %s, а огонь факела искать негде" % TORCH_NODE)
+		return
+	var box := prop_world_aabb(torch)
+	var bad: Array[String] = []
+	var hit: Variant = null
+	for light in lights:
+		if not is_warm_light(light):
+			continue
+		var p: Vector3 = world_position_of(light as Node3D)
+		if Vector2(p.x, p.z).distance_to(Vector2(box.get_center().x, box.get_center().z)) > TORCH_LIGHT_XZ_TOL:
+			continue
+		if p.y < box.position.y or p.y > box.end.y:
+			bad.append("тёплый %s на y %.2f вне кронштейна (%.2f-%.2f)" % [light.name, p.y, box.position.y, box.end.y])
+			continue
+		hit = "%s на (%.2f, %.2f, %.2f), энергия %.1f" % [light.name, p.x, p.y, p.z, (light as Light3D).light_energy]
+	if hit == null:
+		bad.append("нет тёплого источника у факела (%.2f, %.2f)" % [box.get_center().x, box.get_center().z])
+	if bad.is_empty():
+		print("ok: тёплый свет факела: %s" % hit)
+	else:
+		failed += 1
+		print("ПРОВАЛ тёплый свет факела: %s" % "; ".join(bad))
+
+
+# Конусы-лучи (design.md:72-74): аддитивный меш под каждым колодцем и под шахтой двора,
+# от края шахты до пола, без коллизии и без собственных теней. Проверка «без коллизии»
+# нужна в том числе потому, что коллизии зоны считаются проверкой решётки
+# («проверено N фигур») — лишняя фигура там тихо меняет число.
+func check_beam_cones(zone: Node) -> void:
+	var beams := collect_beam_meshes(zone, [] as Array)
+	if beams.is_empty():
+		failed += 1
+		print("ПРОВАЛ в зоне нет конусов-лучей (прозрачных мешей)")
+		return
+	var bad: Array[String] = []
+	var placed: Array[String] = []
+	for beam in beams:
+		var mat := (beam as MeshInstance3D).material_override as BaseMaterial3D
+		if mat == null and (beam as MeshInstance3D).mesh != null:
+			mat = (beam as MeshInstance3D).mesh.surface_get_material(0) as BaseMaterial3D
+		if mat == null or mat.blend_mode != BaseMaterial3D.BLEND_MODE_ADD:
+			bad.append("%s: материал не аддитивный" % beam.name)
+			continue
+		if mat.albedo_color.a < BEAM_ALPHA_MIN or mat.albedo_color.a > BEAM_ALPHA_MAX:
+			bad.append("%s: альфа %.3f вне %.2f-%.2f (design.md:72 «малая альфа»)"
+				% [beam.name, mat.albedo_color.a, BEAM_ALPHA_MIN, BEAM_ALPHA_MAX])
+		if (beam as MeshInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF:
+			bad.append("%s: сам отбрасывает тени" % beam.name)
+		if count_of_class(beam, "CollisionShape3D") > 0:
+			bad.append("%s: у конуса-луча есть коллизия" % beam.name)
+	# По конусу на каждый колодец и на шахту двора.
+	for phi in CAVE_WELL_PHIS:
+		var centre := well_ground_centre(phi)
+		var beam := find_beam(beams, centre, WELL_RIM_Y)
+		if beam == null:
+			bad.append("нет конуса-луча под колодцем (%.2f, %.2f)" % [centre.x, centre.y])
+		else:
+			placed.append("колодец (%.2f, %.2f) -> %s" % [centre.x, centre.y, beam.name])
+	var yard_centre := Vector2(YARD_SHAFT_X, YARD_SHAFT_Z)
+	var yard_beam := find_beam(beams, yard_centre, YARD_CEILING_Y)
+	if yard_beam == null:
+		bad.append("нет конуса-луча под шахтой двора (%.1f, %.1f)" % [yard_centre.x, yard_centre.y])
+	else:
+		placed.append("двор (%.1f, %.1f) -> %s" % [yard_centre.x, yard_centre.y, yard_beam.name])
+	if bad.is_empty():
+		print("ok: конусы-лучи: %d прозрачных меша, все аддитивные, без коллизии и теней (%s)"
+			% [beams.size(), ", ".join(placed)])
+	else:
+		failed += 1
+		print("ПРОВАЛ конусы-лучи: %s" % "; ".join(bad))
+
+
+# Кандидаты в конусы-лучи — ПРОЗРАЧНЫЕ меши зоны (transparency != DISABLED): ими нарисованы
+# лучи. Так кандидат не зависит от того, в какой группе он лежит, и обычная геометрия
+# (оболочка, статуя, пол двора) в проверку не попадает.
+func collect_beam_meshes(node: Node, out: Array) -> Array:
+	if node is MeshInstance3D:
+		var instance := node as MeshInstance3D
+		var mat := instance.material_override as BaseMaterial3D
+		if mat == null and instance.mesh != null:
+			mat = instance.mesh.surface_get_material(0) as BaseMaterial3D
+		if mat != null and mat.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			out.append(instance)
+	for child in node.get_children():
+		collect_beam_meshes(child, out)
+	return out
+
+
+# Конус под конкретным колодцем/шахтой: центр по XZ, кромка не выше края шахты и низ у пола.
+func find_beam(beams: Array, centre: Vector2, top_y: float) -> Node3D:
+	for beam in beams:
+		var box := prop_world_aabb(beam)
+		if Vector2(box.get_center().x, box.get_center().z).distance_to(centre) > WELL_LIGHT_XZ_TOL:
+			continue
+		if box.end.y <= top_y and box.position.y <= BEAM_FOOT_Y_MAX:
+			return beam
+	return null
+
+
+# Туман (T5): VolumeFog отложен решением пользователя (design.md:74), поэтому проверка
+# ЗЕЛЁНАЯ по умолчанию и носит характер отчёта, а не требования: она печатает фактическое
+# состояние. Если WorldEnvironment в зоне появится вместе с туманом — отчёт это покажет.
+func check_zone_fog(zone: Node) -> void:
+	var envs: Array = []
+	collect_world_environments(zone, envs)
+	if envs.is_empty():
+		print("ok: WorldEnvironment в зоне нет, туман не задан (VolumeFog отложен, design.md:74)")
+		return
+	var lines: Array[String] = []
+	for env in envs:
+		var e: Environment = (env as WorldEnvironment).environment
+		if e == null:
+			lines.append("%s: без Environment" % env.name)
+			continue
+		lines.append("%s: fog_enabled=%s" % [env.name, str(e.fog_enabled)])
+	print("ok: WorldEnvironment в зоне: %s" % ", ".join(lines))
+
+
+func collect_world_environments(node: Node, out: Array) -> void:
+	if node is WorldEnvironment:
+		out.append(node)
+	for child in node.get_children():
+		collect_world_environments(child, out)
+
+
+# Прожектор смотрит вниз: его -Z (Vector3.FORWARD) после поворота узла идёт в -Y.
+# Прожектор, повёрнутый не туда, стоит под шахтой и освещает стену — дефект, который
+# по одним координатам не виден. Omni-источник направления не имеет — для него истина.
+func points_down(light: Node) -> bool:
+	if not (light is SpotLight3D):
+		return true
+	var forward: Vector3 = world_xform_of(light as Node3D).basis * Vector3.FORWARD
+	return forward.y <= -0.9
+
+
+# Трансформ узла в координатах корня сцены. Считается сложением ЛОКАЛЬНЫХ трансформов
+# предков, а не через global_transform: зона на этом шаге проверки ещё не в дереве
+# (root.add_child(zone) ниже по check_gate_entrance), и global_transform на узле вне
+# дерева печатает ERROR и отдаёт единичную матрицу — проверка покраснела бы ложно.
+func world_xform_of(node: Node3D) -> Transform3D:
+	var xf := Transform3D.IDENTITY
+	var current: Node = node
+	while current is Node3D:
+		xf = (current as Node3D).transform * xf
+		current = current.get_parent()
+	return xf
+
+
+# Мировая позиция узла — тем же сложением, что и world_xform_of.
+func world_position_of(node: Node3D) -> Vector3:
+	return world_xform_of(node).origin
+
+
+# Холодный — синий канал сильнее красного (небесный свет из шахты), тёплый — наоборот.
+func is_cold_light(light: Node) -> bool:
+	var c: Color = (light as Light3D).light_color
+	return c.b - c.r >= COLD_CHANNEL_GAP
+
+
+func is_warm_light(light: Node) -> bool:
+	var c: Color = (light as Light3D).light_color
+	return c.r - c.b >= WARM_CHANNEL_GAP
+
+
+# Центр колодца в мировых координатах Godot (y = 0): rho = CAVE_WELL_RHO, wz = -rho*sin(phi).
+# Знак минус — смена знака оси при переходе Blender Y -> Godot Z; см. check_cave_wells.
+func well_ground_centre(phi: float) -> Vector2:
+	var rad := deg_to_rad(phi)
+	return Vector2(CAVE_WELL_RHO * cos(rad), -CAVE_WELL_RHO * sin(rad))
 
 
 # Проверки, общие для всех трёх объектов двора: в поддереве ровно один инстанс меша,

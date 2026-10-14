@@ -134,6 +134,50 @@ size = Vector3(2.4, 0.4, 2.4)
 material = SubResource("yard_granite")
 size = Vector3(1.8, 0.6, 1.8)
 
+; Свет зоны (T5, design.md:68-74). Холодный свет из шахт и тёплое пламя — два полюса
+; образа; VolumeFog отложен, поэтому «лучи» сделаны дешёвым аддитивным конусом-мешем:
+; transparency = 1 (нужен для смешивания), blend_mode = 1 (ADD), shading_mode = 0 (unshaded),
+; cull_mode = 2 — конус виден и изнутри, когда игрок входит в луч. Альфа малая: конус
+; не должен перекрывать геометрию, он только подсвечивает воздух.
+[sub_resource type="StandardMaterial3D" id="beam_cold"]
+transparency = 1
+blend_mode = 1
+cull_mode = 2
+shading_mode = 0
+albedo_color = Color(0.72, 0.84, 1, 0.08)
+
+; Конус двора чуть плотнее: шахта там вдвое шире (диаметр 3.21 против ~1.4 у колодцев).
+[sub_resource type="StandardMaterial3D" id="beam_yard"]
+transparency = 1
+blend_mode = 1
+cull_mode = 2
+shading_mode = 0
+albedo_color = Color(0.78, 0.88, 1, 0.11)
+
+; Конус-луч зала: верх — радиус отверстия колодца (~0.7 м), низ — расходится до пола.
+; Верхняя кромка 5.95 чуть ниже края свода (6.06-6.12), низ 0.05 — над полом, чтобы
+; не было z-борьбы с полом. Высота 5.9, центр узла y = 3.0.
+[sub_resource type="CylinderMesh" id="beam_hall"]
+material = SubResource("beam_cold")
+top_radius = 0.65
+bottom_radius = 2.0
+height = 5.9
+radial_segments = 16
+rings = 1
+cap_top = false
+cap_bottom = false
+
+; Конус двора: верх — радиус шахты 1.6 м (потолок двора y = 7.0), низ шире втрое.
+[sub_resource type="CylinderMesh" id="beam_yard_mesh"]
+material = SubResource("beam_yard")
+top_radius = 1.5
+bottom_radius = 3.3
+height = 6.85
+radial_segments = 20
+rings = 1
+cap_top = false
+cap_bottom = false
+
 [node name="GateEntrance" type="Node3D" unique_id=1020595901]
 
 [node name="Cave" type="Node3D" parent="." unique_id=555334214 instance=ExtResource("1_cave")]
@@ -363,3 +407,90 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6.490483, 5.5381275, 0.007027
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="ArchLintelBody" unique_id=1618452313]
 shape = SubResource("box_arch_lintel")
+
+; Освещение зоны (T5). Позиции — измерены по геометрии оболочки, а не взяты из плана:
+; отверстия колодцев в мировых координатах Godot (0, -2.48), (-2.21, 1.28), (2.25, 1.30)
+; (центр каждого — середина разрыва потолка, замеренная сканированием; номинал rho = 2.6,
+; азимуты 90/210/330, знак оси: wz = -rho*sin(phi), смена знака Blender Y -> Godot Z),
+; край свода над ними 6.06-6.12 м. Шахта двора — x 9.40..12.55, z -1.55..1.55 при потолке 7.0,
+; то есть центр (11, 0), радиус 1.6.
+;
+; Холодные SpotLight3D стоят ПОД краем шахты (y = 5.9 и 6.85), а не в её устье на y = 9:
+; луч должен начинаться в своде, иначе конус уезжает в сплошную породу. Свет вниз:
+; поворот -90° вокруг X (basis-столбцы (1,0,0), (0,0,-1), (0,1,0) — -Z смотрит в -Y).
+; Тени включены у холодных пятен: свет из шахты — единственный, что лепит форму
+; (design.md:72-74); у тёплых источников тени выключены — Omni-тень стоит шесть проходов,
+; а их роль — заливка и контраст, а не рельеф.
+[node name="Lighting" type="Node3D" parent="."]
+
+[node name="ColdShaftA" type="SpotLight3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 5.9, -2.48)
+light_color = Color(0.72, 0.84, 1, 1)
+light_energy = 3.0
+shadow_enabled = true
+spot_range = 8.0
+spot_angle = 19.0
+
+[node name="ColdShaftB" type="SpotLight3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, -2.21, 5.9, 1.28)
+light_color = Color(0.72, 0.84, 1, 1)
+light_energy = 3.0
+shadow_enabled = true
+spot_range = 8.0
+spot_angle = 19.0
+
+[node name="ColdShaftC" type="SpotLight3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 2.25, 5.9, 1.3)
+light_color = Color(0.72, 0.84, 1, 1)
+light_energy = 3.0
+shadow_enabled = true
+spot_range = 8.0
+spot_angle = 19.0
+
+; Столб света двора (design.md:68 «одна крупная шахта над статуей»): шире и ярче
+; зального, ширина пятна на полу (6.85 * tan 25° = 3.2 м) совпадает с низом конуса-меша.
+[node name="ColdYardShaft" type="SpotLight3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 11, 6.85, 0)
+light_color = Color(0.78, 0.88, 1, 1)
+light_energy = 4.0
+shadow_enabled = true
+spot_range = 9.0
+spot_angle = 25.0
+
+; Огонь в жаровне: тёплый OmniLight3D внутри чаши (верх жаровни по AABB меша y = 0.9),
+; поэтому источник ниже края и светит наружу, а не вверх в породу.
+[node name="BrazierFire" type="OmniLight3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.7, 0.75, 2.9)
+light_color = Color(1, 0.68, 0.36, 1)
+light_energy = 2.5
+omni_range = 5.5
+
+; Настенный факел двора (design.md:69 «тёплые факелы на стенах двора — контраст»):
+; слабый тёплый OmniLight3D у верхней чаши кронштейна. Без теней и с малой дальностью,
+; чтобы это был акцент, а не второй источник зала.
+[node name="TorchFlame" type="OmniLight3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.5, 2.3, 2.6)
+light_color = Color(1, 0.62, 0.3, 1)
+light_energy = 1.5
+omni_range = 3.2
+
+; Конусы-лучи: декоративные меши без коллизии и без теней (cast_shadow = 0).
+[node name="BeamWellA" type="MeshInstance3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, -2.48)
+cast_shadow = 0
+mesh = SubResource("beam_hall")
+
+[node name="BeamWellB" type="MeshInstance3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.21, 3, 1.28)
+cast_shadow = 0
+mesh = SubResource("beam_hall")
+
+[node name="BeamWellC" type="MeshInstance3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.25, 3, 1.3)
+cast_shadow = 0
+mesh = SubResource("beam_hall")
+
+[node name="BeamYard" type="MeshInstance3D" parent="Lighting"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 3.475, 0)
+cast_shadow = 0
+mesh = SubResource("beam_yard_mesh")
