@@ -46,19 +46,30 @@ const MOVE_FRAMES := 120
 const MOVE_MIN_TRAVEL := 0.5
 const MOVE_CLEARANCE := 0.05
 const POSITION_EPS := 0.0001
-# 7. Оболочка пещеры T1: cave_gate.glb грузится напрямую, без инстанса в level.tscn (задача 6).
+# 7. Оболочка пещеры T1/T2r: cave_gate.glb грузится напрямую, без инстанса в level.tscn (задача 6).
 # Размеры повторяют game/tools/build_cave_gate.py: поменял там — поменяй и здесь (см. отчёт T1).
 const CAVE_GLB_PATH := "res://assets/cave_gate.glb"
 const CAVE_MESH_INSTANCES := 1
-const CAVE_DIAMETER_MIN := 12.0
-const CAVE_DIAMETER_MAX := 16.0
-const CAVE_DOME_MIN := 4.0
+# Габарит БЛОКА (не купола): после растяжки в +X под двор-яму (T2r-a3) пятно
+# x ∈ [-8, +16] = 24 м, z = 16 м. Диапазоны узкие: блок не должен ни сжаться
+# обратно, ни раздуться.
+const CAVE_BLOCK_X_MIN := 22.0
+const CAVE_BLOCK_X_MAX := 26.0
+const CAVE_BLOCK_Z_MIN := 14.0
+const CAVE_BLOCK_Z_MAX := 18.0
+# Свод зала: апекс купола 7.0 м. Проверяется вертикальным сканом над центром
+# зала (0, 0), а не по AABB блока: верхняя плоскость блока (9.0) — это крыша
+# породы, и по ней высота свода не читается.
+const CAVE_DOME_MIN := 6.4
+const CAVE_DOME_MAX := 7.2
 const CAVE_STEP_MAX := 0.1
 const CAVE_INTERIOR_RADIUS := 6.5    # зона ровного пола: подъём от пола ближе этой границы = ступень
 const CAVE_INTERIOR_MIN_CORNERS := 1900
 const CAVE_OPEN_MIN_WIDTH := 3.0
 const CAVE_OPEN_MIN_HEIGHT := 5.0
 const CAVE_OPEN_X := 4.0             # проём смотрит на +X и начинается этой координаты
+const CAVE_OPEN_X_MAX := 8.05        # проём кончается стеной двора (x = 8.0); дальше — двор,
+                                      # его стены закрывают обзор и к проёму отношения не имеют
 const CAVE_OPEN_SCAN_Z := 4.0        # сканируем полосу |z| <= 4 м (ось Z — «глубина» в glTF)
 const CAVE_OPEN_Z_FROM := 0.15       # первая высота скана (кольца купола кратны 0.4)
 const CAVE_OPEN_Z_TO := 5.0          # высота, до которой скан меряет ширину проёма (не измерение:
@@ -67,6 +78,17 @@ const CAVE_OPEN_Z_STEP := 0.1
 const CAVE_OPEN_LINTEL_Z := 5.2      # контроль чувствительности: над проёмом есть перемычка
 const CAVE_WELL_RHO := 2.6
 const CAVE_WELL_PHIS := [90.0, 210.0, 330.0]
+# Двор-яма (T2r-a3, design.md:65-68): глухая яма в породе под статую.
+const CAVE_YARD_WALL_X := 8.0        # стена у ворот (та же плоскость, что и лоб тоннеля)
+const CAVE_YARD_FAR_X := 15.0        # дальняя стена
+const CAVE_YARD_HALF := 4.0          # половина ширины по Z
+const CAVE_YARD_TOP_MIN := 6.0       # потолок двора не ниже
+const CAVE_YARD_PROBE_Y := 3.0       # высота горизонтальных лучей проверки стен
+const CAVE_YARD_SCAN_Z := 3.0        # точка вертикального скана потолка: в стороне от отверстия шахты
+const CAVE_YARD_WALL_Z := 2.5        # z лучей проверки стен: внутри двора, вне проёма (|z| <= 1.9)
+                                    # и не на колонке стены (колонки кратны ~0.213 м)
+const CAVE_YARD_ROCK_MIN := 0.3      # минимальная толщина породы за дальней стеной
+const CAVE_WALL_MIN := 0.1           # допуск на положение стен двора
 const CAVE_EPS := 0.0001
 
 const GATE_SCENE := "res://level/zones/gate_entrance.tscn"
@@ -503,35 +525,48 @@ func check_cave_shell() -> void:
 	print("info: оболочка: треугольников %d, поверхностей %d" % [tris.size(), mesh.get_surface_count()])
 
 	var stats := cave_stats(tris)
-	check_cave_shell_size(stats)
+	check_cave_block_size(stats)
+	check_cave_dome(tris)
 	check_cave_floor(stats)
 	check_cave_floor_normals(mesh)
 	check_cave_opening(tris)
 	check_cave_wells(tris)
+	check_cave_yard(tris)
 	shell.free()
 
 
-# Габариты оболочки: свод не ниже 4 м, диаметр 12–16 м, пол лежит на y=0.
-func check_cave_shell_size(stats: Dictionary) -> void:
-	var max_y: float = stats["max_y"]
+# Габарит БЛОКА породы: пятно плана и пол на y=0. Именно блок, а не купол:
+# после растяжки в +X (T2r-a3) его пятно 24 x 16 м, тогда как купол — 14.4 м.
+func check_cave_block_size(stats: Dictionary) -> void:
 	var min_y: float = stats["min_y"]
 	var dx: float = stats["dx"]
 	var dz: float = stats["dz"]
-	if max_y >= CAVE_DOME_MIN:
-		print("ok: высота свода %.2f м >= %.1f" % [max_y, CAVE_DOME_MIN])
+	if dx >= CAVE_BLOCK_X_MIN and dx <= CAVE_BLOCK_X_MAX \
+			and dz >= CAVE_BLOCK_Z_MIN and dz <= CAVE_BLOCK_Z_MAX:
+		print("ok: габарит блока %.2f x %.2f м в диапазоне %.0f–%.0f x %.0f–%.0f" % [dx, dz,
+			CAVE_BLOCK_X_MIN, CAVE_BLOCK_X_MAX, CAVE_BLOCK_Z_MIN, CAVE_BLOCK_Z_MAX])
 	else:
 		failed += 1
-		print("ПРОВАЛ высота свода %.2f м < %.1f" % [max_y, CAVE_DOME_MIN])
-	if dx >= CAVE_DIAMETER_MIN and dx <= CAVE_DIAMETER_MAX and dz >= CAVE_DIAMETER_MIN and dz <= CAVE_DIAMETER_MAX:
-		print("ok: диаметр купола %.2f x %.2f м в диапазоне %.0f–%.0f" % [dx, dz, CAVE_DIAMETER_MIN, CAVE_DIAMETER_MAX])
-	else:
-		failed += 1
-		print("ПРОВАЛ диаметр купола %.2f x %.2f м вне диапазона %.0f–%.0f" % [dx, dz, CAVE_DIAMETER_MIN, CAVE_DIAMETER_MAX])
+		print("ПРОВАЛ габарит блока %.2f x %.2f м вне диапазона %.0f–%.0f x %.0f–%.0f" % [dx, dz,
+			CAVE_BLOCK_X_MIN, CAVE_BLOCK_X_MAX, CAVE_BLOCK_Z_MIN, CAVE_BLOCK_Z_MAX])
 	if absf(min_y) <= CAVE_EPS:
 		print("ok: пол лежит на y=0 (минимум %.4f)" % min_y)
 	else:
 		failed += 1
 		print("ПРОВАЛ пол не на y=0: минимум %.4f" % min_y)
+
+
+# Свод зала: вертикальный скан над центром полости (0, 0) должен упереться в
+# купол на APEX_Z. Скан по XZ выбирает самую низкую грань, накрывающую точку, —
+# это и есть высота свода над полом (крышка блока на 9.0 м сюда не попадает:
+# над центром зала её нет).
+func check_cave_dome(tris: Array) -> void:
+	var dome := cave_surface_y(tris, 0.0, 0.0)
+	if dome >= CAVE_DOME_MIN and dome <= CAVE_DOME_MAX:
+		print("ok: свод над центром зала %.2f м в диапазоне %.1f–%.1f" % [dome, CAVE_DOME_MIN, CAVE_DOME_MAX])
+	else:
+		failed += 1
+		print("ПРОВАЛ свод над центром зала %.2f м вне диапазона %.1f–%.1f" % [dome, CAVE_DOME_MIN, CAVE_DOME_MAX])
 
 
 # Ровность пола: «подъём» — треугольник, касающийся пола (y=0) и поднимающийся выше
@@ -685,6 +720,52 @@ func check_cave_wells(tris: Array) -> void:
 	else:
 		failed += 1
 		print("ПРОВАЛ контроль: над центром купола нет геометрии — тест колодцев не чувствителен")
+
+
+# Двор-яма (T2r-a3): глухая яма в породе с потолком и стенами по периметру.
+# Проверяется лучами по готовому мешу: четыре горизонтальных луча из центра двора
+# на высоте CAVE_YARD_PROBE_Y должны упереться в стены на заданных координатах
+# (стена у ворот — вне проёма, поэтому луч идёт при |z| = 3.0), за дальней стеной
+# должна быть порода, а потолок (скан при z = CAVE_YARD_SCAN_Z, то есть в стороне
+# от отверстия шахты) — не ниже CAVE_YARD_TOP_MIN.
+func check_cave_yard(tris: Array) -> void:
+	var cx := 0.5 * (CAVE_YARD_WALL_X + CAVE_YARD_FAR_X)
+	var origin := Vector3(cx, CAVE_YARD_PROBE_Y, CAVE_YARD_WALL_Z)
+	# Пути лучей переводим в координаты: hit = o + t*d по изменяемой оси.
+	var far_hits := cave_rays(tris, origin, Vector3(1.0, 0.0, 0.0), 2)
+	var near_hits := cave_rays(tris, origin, Vector3(-1.0, 0.0, 0.0), 1)
+	var plus_hits := cave_rays(tris, origin, Vector3(0.0, 0.0, 1.0), 1)
+	var minus_hits := cave_rays(tris, origin, Vector3(0.0, 0.0, -1.0), 1)
+	var ceil := cave_surface_y(tris, cx, CAVE_YARD_SCAN_Z)
+	var bad: Array = []
+	var far_x: float = -1.0
+	var rock: float = -1.0
+	if far_hits.size() < 2:
+		bad.append("дальняя стена не найдена (попаданий луча %d)" % far_hits.size())
+	else:
+		far_x = cx + float(far_hits[0])
+		rock = far_hits[1] - far_hits[0]
+		if absf(far_x - CAVE_YARD_FAR_X) > CAVE_WALL_MIN:
+			bad.append("дальняя стена на x = %.3f вместо %.2f" % [far_x, CAVE_YARD_FAR_X])
+		elif rock < CAVE_YARD_ROCK_MIN:
+			bad.append("породы за дальней стеной %.3f м < %.2f" % [rock, CAVE_YARD_ROCK_MIN])
+	var near_x: float = cx - float(near_hits[0]) if not near_hits.is_empty() else -1.0
+	if absf(near_x - CAVE_YARD_WALL_X) > CAVE_WALL_MIN:
+		bad.append("стена у ворот x = %.3f вместо %.2f" % [near_x, CAVE_YARD_WALL_X])
+	var plus_z: float = CAVE_YARD_WALL_Z + float(plus_hits[0]) if not plus_hits.is_empty() else -1.0
+	if absf(plus_z - CAVE_YARD_HALF) > CAVE_WALL_MIN:
+		bad.append("боковая стена z = %.3f вместо %.2f" % [plus_z, CAVE_YARD_HALF])
+	var minus_z: float = CAVE_YARD_WALL_Z - float(minus_hits[0]) if not minus_hits.is_empty() else -1.0
+	if absf(minus_z + CAVE_YARD_HALF) > CAVE_WALL_MIN:
+		bad.append("боковая стена z = %.3f вместо %.2f" % [minus_z, CAVE_YARD_HALF])
+	if ceil < CAVE_YARD_TOP_MIN:
+		bad.append("потолок двора %.2f м < %.1f" % [ceil, CAVE_YARD_TOP_MIN])
+	if bad.is_empty():
+		print("ok: двор-яма: стены x = %.2f / %.2f, боковые |z| = %.2f, потолок %.2f м, породы за дальней стеной %.2f м"
+			% [near_x, far_x, plus_z, ceil, rock])
+	else:
+		failed += 1
+		print("ПРОВАЛ двор-яма: %s" % "; ".join(bad))
 
 
 # Материал оболочки: запечённые растровые карты (glTF процедурные ноды не переживает).
@@ -1288,12 +1369,14 @@ func cave_stats(tris: Array) -> Dictionary:
 
 
 # Отрезок по Z, который треугольник занимает на высоте h (ось Y вверх, стена на +X).
-# null — высота задета не была или треугольник не из фронтальной стены.
-# Проекция на Z у противоположной стены совпала бы с проёмом, поэтому её и отсекаем.
+# null — высота задета не была или треугольник не из стены прохода.
+# Границы по X: проём начинается у стены зала (CAVE_OPEN_X) и кончается плоскостью
+# стены двора (CAVE_OPEN_X_MAX). Всё, что дальше, — уже двор: его стены не имеют
+# отношения к проёму и закрыли бы обзор (после появления двора в T2r-a3).
 func cave_wall_span(tri: Array, h: float) -> Variant:
 	for i in 3:
 		var v: Vector3 = tri[i]
-		if v.x < CAVE_OPEN_X:
+		if v.x < CAVE_OPEN_X or v.x > CAVE_OPEN_X_MAX:
 			return null
 	var zs: Array = []
 	for i in 3:
@@ -1350,6 +1433,69 @@ func cave_ceiling_hits(tris: Array, x: float, z: float) -> int:
 		if cave_contains_xz(tri, x, z):
 			hits += 1
 	return hits
+
+
+# Высота поверхности над точкой (x, z): минимальная по граням (пол исключён),
+# проекция которых накрывает точку. Высота берётся интерполяцией по треугольнику,
+# а не минимумом вершин — иначе на наклонной грани ответ был бы занижен.
+# INF — над точкой нет поверхности (например, прямо над отверстием шахты).
+func cave_surface_y(tris: Array, x: float, z: float) -> float:
+	var best := INF
+	for tri in tris:
+		if cave_is_floor_tri(tri):
+			continue
+		if not cave_contains_xz(tri, x, z):
+			continue
+		var a: Vector3 = tri[0]
+		var b: Vector3 = tri[1]
+		var c: Vector3 = tri[2]
+		var den := (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z)
+		if absf(den) < CAVE_EPS:
+			continue
+		var wb := ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / den
+		var wc := ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / den
+		best = minf(best, a.y * (1.0 - wb - wc) + b.y * wb + c.y * wc)
+	return best
+
+
+# Первые `limit` попаданий луча (o, d) по мешу: расстояния t по возрастанию.
+# Свой Мёллер–Трамбор: встроенного лучепинания у ArrayMesh нет, а проверки
+# границы двора (стены по периметру, порода за дальней стеной) без лучей не
+# выразить — проекция видна только сбоку.
+func cave_rays(tris: Array, o: Vector3, d: Vector3, limit: int) -> Array:
+	var hits: Array = []
+	for tri in tris:
+		var a: Vector3 = tri[0]
+		var b: Vector3 = tri[1]
+		var c: Vector3 = tri[2]
+		var e1 := b - a
+		var e2 := c - a
+		var p := d.cross(e2)
+		var det := e1.dot(p)
+		if absf(det) < 1e-12:
+			continue
+		var inv := 1.0 / det
+		var tv := o - a
+		var u := tv.dot(p) * inv
+		if u < -CAVE_EPS or u > 1.0 + CAVE_EPS:
+			continue
+		var q := tv.cross(e1)
+		var v := d.dot(q) * inv
+		if v < -CAVE_EPS or u + v > 1.0 + CAVE_EPS:
+			continue
+		var t := e2.dot(q) * inv
+		if t <= 1e-4:
+			continue
+		hits.append(t)
+	hits.sort()
+	# Совпадающие t (грань из двух треугольников) схлопываем.
+	var out: Array = []
+	for t in hits:
+		if out.is_empty() or t - out.back() > 0.01:
+			out.append(t)
+		if out.size() == limit:
+			break
+	return out
 
 
 # Вершина лежит в плоскости пола y=0 (тот же порог, что и в проверках пола оболочки).
