@@ -117,18 +117,30 @@ const ARCH_BODIES := ["ArchLegLBody", "ArchLegRBody", "ArchLintelBody"]
 # Единый допуск всех проверок зоны (мировые AABB, коробки, трансформы); проверки оболочки — CAVE_EPS.
 const GATE_BOX_EPS := 0.02
 
-# Решётка ворот (T3). open_height = 3.5 м — это СОБСТВЕННАЯ высота подъёма решётки, а не высота
-# проёма (решение пользователя 13.10.2026, ledger.md): нижняя часть уходит в нишу над проёмом,
-# проход остаётся открытым для капсулы 1.8 м. Поднимать на всю высоту проёма нельзя.
-const PORTCULLIS_OPEN_HEIGHT := 3.5
+# Решётка ворот (T3; ход сокращён в T3-д). open_height — СОБСТВЕННАЯ высота подъёма решётки,
+# а не высота проёма (GATE_OPENING_HEIGHT = 5.0, решение пользователя 13.10.2026, ledger.md):
+# нижняя часть уходит в нишу над проёмом, проход остаётся открытым для капсулы 1.8 м.
+# 2.4 м (решение пользователя 14.10.2026): при 3.5 м верх решётки доходил до y = 8.51 и уходил
+# в сплошную породу над нишей-дымоходом. Границы подъёма проверяет check_raised_grate_niche.
+const PORTCULLIS_OPEN_HEIGHT := 2.4
 # Потолок ожидания подъёма: анимация open_time (1.0 с) идёт в физических кадрах, ждать 2.5 с.
 const PORTCULLIS_RAISE_FRAME_CAP := 150
 const PORTCULLIS_REPEAT_FRAMES := 20    # сколько кадров ждём после третьего open()
-# Физическая проба прохода: капсула игрока (level.tscn: радиус 0.35, высота 1.8) едет из двора
-# в тоннель по -X через решётку и арку. Старт на 0.95 — низ капсулы на 0.05 м выше пола двора (y = 0).
+# Верх ниши-дымохода в породе (build_cave_gate.py: NICHE_TOP). Проверка обязана УМЕРИТЬ его по
+# геометрии оболочки, а не взять константой: иначе дефект «решётка выше ниши» можно вернуть,
+# не зная ниши. CAVE_NICHE_TOP — только контроль, что проба нашла именно нишу.
+const CAVE_NICHE_TOP := 8.0
+const CAVE_NICHE_EPS := 0.05
+# Точка под нишей: x между NICHE_BACK = 7.4 и стеной двора x = 8.0, z = 0 (центр проёма).
+const PORTCULLIS_NICHE_PROBE := Vector2(7.7, 0.0)
+# Зазор под поднятой решёткой должен быть не только «как капсула», но и с запасом на голову.
+const PORTCULLIS_HEADROOM_MIN := 0.3
+# Физическая проба прохода: капсула игрока (level.tscn: радиус 0.35, высота 1.8, начало узла
+# Character — НИЗ капсулы, CollisionShape3D сдвинут на +0.9) едет из двора в тоннель по -X через
+# решётку и арку. Старт на 0.05 — низ капсулы на 0.05 м выше пола двора (y = 0), как в check_movement.
 const PORTCULLIS_CAPSULE_RADIUS := 0.35
 const PORTCULLIS_CAPSULE_HEIGHT := 1.8
-const PORTCULLIS_START := Vector3(8.6, 0.95, 0.0)
+const PORTCULLIS_START := Vector3(8.6, 0.05, 0.0)
 const PORTCULLIS_PUSH_FRAMES := 90
 const PORTCULLIS_MIN_TRAVEL := 1.0     # капсула должна реально ехать, а не стоять на месте
 const PORTCULLIS_PASSED_X := 6.5       # прошёл: за лбом породы (x = 6.8) и центром арки (x = 6.5)
@@ -1032,6 +1044,8 @@ func check_gate_portcullis_open(zone: Node) -> void:
 	else:
 		failed += 1
 		print("ПРОВАЛ повторный open() накопил подъём: %.2f м > %.2f" % [after_repeat, PORTCULLIS_OPEN_HEIGHT])
+	# Границы подъёма (пока решётка поднята): встать под верх ниши и оставить проход для капсулы.
+	check_raised_grate_niche(portcullis as Node3D)
 	var end := await push_capsule(zone, PORTCULLIS_PUSH_FRAMES)
 	var travelled := capsule_travel(end)
 	if travelled < PORTCULLIS_MIN_TRAVEL:
@@ -1044,6 +1058,35 @@ func check_gate_portcullis_open(zone: Node) -> void:
 		print("ПРОВАЛ капсула не прошла поднятую решётку: конец x %.2f > %.2f" % [end.x, PORTCULLIS_PASSED_X])
 	# Возвращаем закрытое положение: мерки AABB решётки не должны зависеть от порядка вызовов.
 	(portcullis as Node3D).position.y = closed_y
+
+
+# Границы подъёма решётки (T3-д). Дефект, найденный в T3: при ходе 3.5 м верх решётки доходил до
+# y = 8.51, а ниша-дымоход вырезана в породе только до y = 8.0 — верхние полметра уходили в
+# сплошную породу. Проверка фиксирует ОБЕ границы, а не «просто проходит»:
+#   - верх поднятой решётки не выше верха ниши; верх ниши МЕРЯЕТСЯ по геометрии оболочки
+#     (cave_surface_y над PORTCULLIS_NICHE_PROBE), а не берётся константой — иначе дефект можно
+#     вернуть, не зная ниши. CAVE_NICHE_TOP — контроль чувствительности пробы;
+#   - зазор снизу (низ поднятой решётки) — не меньше капсулы плюс запас на голову.
+func check_raised_grate_niche(portcullis: Node3D) -> void:
+	var box := prop_world_aabb(portcullis)
+	var niche_top: float = cave_surface_y(get_cave_tris(), PORTCULLIS_NICHE_PROBE.x, PORTCULLIS_NICHE_PROBE.y)
+	var gap := box.position.y
+	var bad: Array[String] = []
+	if not is_finite(niche_top) or absf(niche_top - CAVE_NICHE_TOP) > CAVE_NICHE_EPS:
+		bad.append("верх ниши %.2f м вместо %.2f — проба не нашла нишу (x %.2f, z %.2f)"
+			% [niche_top, CAVE_NICHE_TOP, PORTCULLIS_NICHE_PROBE.x, PORTCULLIS_NICHE_PROBE.y])
+	if box.end.y > niche_top:
+		bad.append("верх решётки %.2f м выше верха ниши %.2f м (ход слишком большой)" % [box.end.y, niche_top])
+	var needed := PORTCULLIS_CAPSULE_HEIGHT + PORTCULLIS_HEADROOM_MIN
+	if gap < needed:
+		bad.append("зазор под решёткой %.2f м < капсула %.1f + запас %.1f = %.2f м"
+			% [gap, PORTCULLIS_CAPSULE_HEIGHT, PORTCULLIS_HEADROOM_MIN, needed])
+	if bad.is_empty():
+		print("ok: границы подъёма: решётка y %.2f..%.2f, верх ниши %.2f (запас %.2f м), зазор снизу %.2f м >= %.2f м"
+			% [box.position.y, box.end.y, niche_top, niche_top - box.end.y, gap, needed])
+	else:
+		failed += 1
+		print("ПРОВАЛ границы подъёма решётки: %s" % "; ".join(bad))
 
 
 # Путь капсулы по плоскости XZ от старта прогона: вертикаль в этой пробе не участвует.

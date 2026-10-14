@@ -132,11 +132,14 @@ shape = ExtResource("16_cave_col")
 ; Меш вынесен в инстанс-ребёнка: тип КОРНЯ инстансированной сцены сменить нельзя
 ; («Script inherits from native type... can't be assigned to an object of type 'Node3D'»),
 ; поэтому тело — отдельный узел, а модель — его ребёнок с тем же трансформом.
+; Ход подъёма 2.4 м (решение пользователя 14.10.2026): верх решётки в поднятом состоянии
+; y = 7.41, ниша-дымоход в породе вырезана до y = 8.0 (build_cave_gate.py: NICHE_TOP).
+; При ходе 3.5 м верх доходил до 8.51 и уходил в сплошную породу — дефект, найденный в T3.
 [node name="Portcullis" type="AnimatableBody3D" parent="." unique_id=1595889105]
 transform = Transform3D(0, 0, 1, 0, 4.88, 0, -5.9424284, 0, 0, 6.9805, 0, 0.014559063)
 sync_to_physics = true
 script = ExtResource("20_portcullis")
-open_height = 3.5
+open_height = 2.4
 
 [node name="porticullus_1024" parent="Portcullis" instance=ExtResource("3_portc")]
 
