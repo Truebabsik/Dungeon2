@@ -45,6 +45,10 @@ const FLOOR_BODY_NAME := "Floor"
 const WALL_CELLS_EXPECTED := 115
 const FLOOR_CELLS_EXPECTED := 276
 # Движение к стене: стена выбрана по данным коллизий (см. T22-checks-report.md). Грань стены z = 32, старт z = 34.
+# MOVE_START — точка САМОЙ проверки движения в лагере у стены, не точка старта игрока:
+# с T8 герой появляется во дворе форпоста (level.tscn, узел Character), и лагерь для
+# этой пробы остаётся удобной площадкой у прямой стены. Проверка сама ставит позицию
+# (см. check_movement), поэтому перенос старта её не ломает.
 const MOVE_WALL_PATH := "GridCollision/Collision/Wall_16_0_7"
 const MOVE_START := Vector3(66.0, 2.05, 34.0)
 const MOVE_FRAMES := 120
@@ -128,6 +132,7 @@ const GATE_BOX_EPS := 0.02
 # стоит на сплошном полу GridMapFloor, не накрывает старт игрока. Ось зоны не повернута:
 # конец коридора (локально -X, там CorridorFuture) смотрит на открытый пол пещеры.
 const GATE_INSTANCE_NAME := "GateEntrance"
+const YARD_NODE_NAME := "Yard"
 const GATE_POS := Vector3(100.0, 2.06, 12.0)
 const GATE_POS_TOL := 0.01
 # Габарит блока в локальных координатах зоны: x -8..+16 (24 м), z -8..+8 (16 м), y 0..9.
@@ -307,6 +312,12 @@ var failed := 0
 # Треугольники породы для проверок зоны (лучи видимости); наполняется в check_cave_shell,
 # иначе читается напрямую из CAVE_GLB_PATH — проверка зоны не зависит от порядка вызовов.
 var cave_tris_cache: Array = []
+# Точка старта игрока, снятая со СЦЕНЫ (T8): уровень может перенести Character куда угодно,
+# и константа в проверке тогда разъезжается со сценой. Снимается сразу после загрузки
+# уровня, ДО проверок: check_movement переставляет персонажа в MOVE_START и оставляет
+# его там, поэтому в конце прогона читать Character.global_position уже поздно.
+var spawn_point := Vector3.ZERO
+var spawn_known := false
 
 
 func _initialize() -> void:
@@ -324,6 +335,13 @@ func _initialize() -> void:
 	# Узлы сцены получают _ready только на следующем кадре; анимация запускается в первом кадре, проверяем после второго.
 	await process_frame
 	await process_frame
+
+	var character := character_of(level)
+	if character != null:
+		spawn_point = character.global_position
+		spawn_known = true
+		print("info: старт игрока со сцены: (%.2f, %.2f, %.2f), поворот %.4f рад"
+			% [spawn_point.x, spawn_point.y, spawn_point.z, character.rotation.y])
 
 	check_root(level)
 	var modules := collect_modules(level)
@@ -578,8 +596,7 @@ func check_gate_placement(level: Node) -> void:
 		print("ПРОВАЛ %s: низ блока y %.3f, ожидалось %.2f (верх плиты пола %.2f + подъём %.2f)"
 			% [GATE_INSTANCE_NAME, place.y, LEVEL_FLOOR_TOP + GATE_FLOOR_LIFT, LEVEL_FLOOR_TOP, GATE_FLOOR_LIFT])
 		return
-	var foot := Rect2(place.x + GATE_BLOCK_X_FROM, place.z - GATE_BLOCK_Z_HALF,
-		GATE_BLOCK_X_TO - GATE_BLOCK_X_FROM, GATE_BLOCK_Z_HALF * 2.0)
+	var foot := block_rect_from(zone)
 	var container := level.get_node_or_null(GRID_COLLISION_NAME + "/" + COLLISION_CONTAINER_NAME)
 	if container == null:
 		failed += 1
@@ -623,9 +640,21 @@ func check_gate_placement(level: Node) -> void:
 		print("ПРОВАЛ под пятном блока нет пола уровня: %d из %d проб" % [missing, probes])
 		return
 	var character := character_of(level)
-	if character != null and foot.has_point(Vector2(character.position.x, character.position.z)):
+	# T8: старт игрока перенесён во двор форпоста (решение пользователя 15.10.2026), то есть
+	# внутрь пятна блока: двор вырезан в породе ямой. Прежнее «пятно не накрывает старт»
+	# выражало намерение «игрок не в сплошной породе» — после переноса его выражает проверка
+	# ямы: старт либо вне пятна, либо на вырезанном полу двора.
+	var yard := yard_rect(level)
+	if yard.size == Vector2.ZERO:
 		failed += 1
-		print("ПРОВАЛ пятно блока накрывает старт игрока %s" % str(character.position))
+		print("ПРОВАЛ не нашёл пол двора %s/Yard — старт игрока не с чем сверить на сплошную породу"
+			% GATE_INSTANCE_NAME)
+		return
+	if character != null and foot.has_point(Vector2(character.position.x, character.position.z)) \
+			and not yard.has_point(Vector2(character.position.x, character.position.z)):
+		failed += 1
+		print("ПРОВАЛ старт игрока %s в сплошной породе блока (не в яме двора x %.1f..%.1f z %.1f..%.1f)"
+			% [str(character.position), yard.position.x, yard.end.x, yard.position.y, yard.end.y])
 		return
 	# Проём коридора (локально -X, мир x = place.x + GATE_BLOCK_X_FROM) должен смотреть
 	# на пол пещеры: перед ним сплошной подход шириной коридора.
@@ -643,10 +672,11 @@ func check_gate_placement(level: Node) -> void:
 		print("ПРОВАЛ перед проёмом коридора (%.1f, %.1f, %.1f x %.1f) нет пола: %d из %d проб"
 			% [mouth.position.x, mouth.position.y, mouth.size.x, mouth.size.y, mouth_bad, MOUTH_SAMPLES * MOUTH_SAMPLES])
 		return
-	print("ok: %s стоит в %s без поворота, пятно блока x %.1f..%.1f z %.1f..%.1f: стен не задевает (проверено %d коробок), мебели не задевает (тел %s %d), пол под всем пятном (%d проб), проём коридора на x %.1f смотрит на пол пещеры (%d проб), старт игрока %s вне"
+	print("ok: %s стоит в %s без поворота, пятно блока x %.1f..%.1f z %.1f..%.1f: стен не задевает (проверено %d коробок), мебели не задевает (тел %s %d), пол под всем пятном (%d проб), проём коридора на x %.1f смотрит на пол пещеры (%d проб), старт игрока %s вне сплошной породы (двор x %.1f..%.1f z %.1f..%.1f)"
 		% [GATE_INSTANCE_NAME, str(place), foot.position.x, foot.end.x, foot.position.y, foot.end.y,
 			walls, MODULE_BOX_PREFIX, modules, probes, foot.position.x, MOUTH_SAMPLES * MOUTH_SAMPLES,
-			str(character.position) if character != null else "нет"])
+			str(character.position) if character != null else "нет",
+			yard.position.x, yard.end.x, yard.position.y, yard.end.y])
 
 
 # Прямого узла Minecart в level.tscn больше нет — вагонетка живёт внутри зоны входа
@@ -693,6 +723,39 @@ func floor_under(floor_body: Node, point: Vector2) -> bool:
 		if plan_rect_of_shape(child as CollisionShape3D).has_point(point):
 			return true
 	return false
+
+
+# Прямоугольник пола двора форпоста в мировых координатах (плита Yard зоны входа),
+# пустой — если двор не найден. Читается из сцены, а не константой: двор вырезан в
+# блоке породы, и именно он отличает «старт в яме» от «старт в сплошной породе».
+func yard_rect(level: Node) -> Rect2:
+	var yard := level.get_node_or_null(GATE_INSTANCE_NAME + "/" + YARD_NODE_NAME)
+	if yard == null:
+		return Rect2()
+	for shape in yard.get_children():
+		if not (shape is CollisionShape3D):
+			continue
+		var rect := plan_rect_of_shape(shape as CollisionShape3D)
+		if rect.size != Vector2.ZERO:
+			return rect
+	return Rect2()
+
+
+# Пятно блока породы в мировых координатах по узлу зоны; пустой — если узла нет.
+# Считается в локальных осях зоны (GATE_BLOCK_*): поворот зоны сделал бы прямоугольник
+# неверным, и такая проверка есть отдельно (check_gate_placement).
+func block_rect_from(zone: Node3D) -> Rect2:
+	var place := zone.global_position
+	return Rect2(place.x + GATE_BLOCK_X_FROM, place.z - GATE_BLOCK_Z_HALF,
+		GATE_BLOCK_X_TO - GATE_BLOCK_X_FROM, GATE_BLOCK_Z_HALF * 2.0)
+
+
+# То же пятно по узлу уровня; пустой прямоугольник — если инстанса зоны в level.tscn нет.
+func block_rect(level: Node) -> Rect2:
+	var zone := level.get_node_or_null(GATE_INSTANCE_NAME)
+	if not (zone is Node3D):
+		return Rect2()
+	return block_rect_from(zone as Node3D)
 
 
 # 6a. V через вызов toggle_view: переключает current между Camera3D и FPSCamera.
@@ -1472,13 +1535,26 @@ func light_contribution(light: Node, at: Vector3) -> float:
 # компонентах — лагерь отрезан от пещеры стенами GridMap. Это решение ведущего (коридор
 # наружу ещё не прорезан), а не дефект сборки зоны; когда прорежут, строка покажет один
 # компонент. Подробный разбор — в отчёте T7, вопрос 1.
+#
+# T8: точка старта берётся ИЗ СЦЕНЫ (spawn_point, снят в _initialize до всех проверок),
+# а не из константы MOVE_START: после переноса старта во двор форпоста константа указывала
+# бы на лагерь, в котором игрок больше не появляется. НО растр остаётся растом пола
+# УРОВНЯ, а тело зоны (Module_GateEntrance) из него исключено — значит, под точкой старта
+# растр видит плиту пола, лежащую под сплошной породой, и «связаны: true» ничего не
+# говорит о проходимости героя. Поэтому рядом с числом печатается оговорка; про сам путь
+# героя (двор -> решётка -> арка -> зал) отвечает физический прогон check_gate_e2e_route.
 func check_start_to_gate_route(level: Node) -> void:
 	var container := level.get_node_or_null(GRID_COLLISION_NAME + "/" + COLLISION_CONTAINER_NAME)
 	if container == null:
 		print("info: T7 маршрут уровня: нет %s/%s, замер пропущен" % [GRID_COLLISION_NAME, COLLISION_CONTAINER_NAME])
 		return
+	if not spawn_known:
+		failed += 1
+		print("ПРОВАЛ T8: не снята точка старта игрока со сцены, маршрутный замер не выполнен")
+		return
 	var raster := route_raster(container)
-	var start_cell := route_cell_of(Vector2(MOVE_START.x, MOVE_START.z))
+	var start_xz := Vector2(spawn_point.x, spawn_point.z)
+	var start_cell := route_cell_of(start_xz)
 	var gate_cell := route_nearest_free(raster, ROUTE_GATE_APPROACH)
 	var free_cells := 0
 	for value in raster:
@@ -1486,8 +1562,21 @@ func check_start_to_gate_route(level: Node) -> void:
 			free_cells += 1
 	print("info: T7 маршрут уровня: растр %.2f м, свободных ячеек %d, компонент связности %d"
 		% [ROUTE_CELL, free_cells, route_component_count(raster)])
+	if start_cell < 0:
+		print("   info: старт игрока (%.1f, %.1f) вне окна растра (x %.0f..%.0f, z %.0f..%.0f) — замер связности неприменим"
+			% [spawn_point.x, spawn_point.z, ROUTE_X0, ROUTE_X0 + ROUTE_W * ROUTE_CELL,
+				ROUTE_Z0, ROUTE_Z0 + ROUTE_H * ROUTE_CELL])
+		return
+	if raster[start_cell] == 0:
+		print("   info: старт игрока (%.1f, %.1f) не на плите пола уровня — замер связности неприменим"
+			% [spawn_point.x, spawn_point.z])
+		return
+	var block := block_rect(level)
+	if block.size != Vector2.ZERO and block.has_point(start_xz):
+		print("   info: старт игрока (%.1f, %.1f) внутри пятна породы x %.1f..%.1f z %.1f..%.1f: тело зоны исключено из растра, число ниже — про плиту пола под породой, а не про проходимость героя"
+			% [spawn_point.x, spawn_point.z, block.position.x, block.end.x, block.position.y, block.end.y])
 	print("   info: старт игрока (%.1f, %.1f) и подход к воротам (%.1f, %.1f) связаны для капсулы: %s"
-		% [MOVE_START.x, MOVE_START.z, ROUTE_GATE_APPROACH.x, ROUTE_GATE_APPROACH.y,
+		% [spawn_point.x, spawn_point.z, ROUTE_GATE_APPROACH.x, ROUTE_GATE_APPROACH.y,
 			str(route_connected(raster, start_cell, gate_cell))])
 
 
