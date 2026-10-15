@@ -265,6 +265,44 @@ const BRAZIER_NODE := "Brazier"
 const TORCH_NODE := "WallTorch"
 const TORCH_LIGHT_XZ_TOL := 0.7        # огонь факела — у кронштейна, не в углу двора
 
+# T7 — сквозная проверка зоны входа. Маршрут капсулы идёт по локальным координатам зоны:
+# рычаг (LEVER_STAND) -> двор (PORTCULLIS_START) -> решётка и арка -> зал. Новых точек
+# «на глаз» нет: все взяты из уже существующих проб T3/T4, чтобы маршрут T7 совпадал с тем,
+# что уже проверяли.
+const E2E_ROUTE_FRAMES := 420         # 420 физ. кадров по 3 м/с — 21 м пути с запасом
+const E2E_ROUTE_END_X := 3.5          # капсула обязана доехать не под решётку, а в зал
+const E2E_PATH_HALF_MAX := 1.5        # свободная полуширина коридора ищется от 1.5 м вниз
+const E2E_PATH_STEP := 0.05
+const E2E_PATH_MIN := 3.0             # бриф T7 п.2: реквизит не сужает проход до 3 м
+const E2E_STEP_MAX := 0.2             # бриф T7 п.3: ступень на пути не больше 0.2 м
+const E2E_SINK_MAX := 0.02            # бриф T7 п.3: капсула не проваливается в пол
+const E2E_PROBE_UP := 0.6             # луч вниз под капсулой: отскок от верха капсулы
+const E2E_PROBE_DOWN := 1.0           # ... и на 1.0 м ниже её низа
+const E2E_GRAVITY_STEP := 9.8 / 60.0  # капсула должна СТОЯТЬ на полу, а не висеть над ним
+const E2E_HEADROOM_MIN := 0.2         # запас над головой капсулы (1.8 м) под аркой и решёткой
+const E2E_HEAD_SCAN_TOP := 8.0        # луч снимания потолка: выше свода двора (7.0)
+const E2E_HEAD_SCAN_STEP := 0.1
+# Пол, который обязан быть освещён (T7 п.4). Точки — в локальных координатах зоны, на полу.
+const FLOOR_LIGHT_MIN := 0.10         # вклад света: energy / d^2 (верхняя оценка, см. light_contribution)
+const FLOOR_LIGHT_SAMPLES := [
+	["зал, под колодцем A", Vector3(0.0, 0.0, -2.48)],
+	["зал, под колодцем B", Vector3(-2.21, 0.0, 1.28)],
+	["зал, под колодцем C", Vector3(2.25, 0.0, 1.3)],
+	["зал, между колодцами", Vector3(0.0, 0.0, 0.0)],
+	["зал, у ворот", Vector3(5.0, 0.0, 0.0)],
+	["зал, у жаровни", Vector3(2.7, 0.0, 2.9)],
+	["двор, под шахтой", Vector3(11.0, 0.0, 0.0)],
+	["двор, MerchantSpot", Vector3(13.5, 0.0, 0.0)],
+	["двор, под факелом", Vector3(14.5, 0.0, 2.6)],
+]
+# Растр связности пола уровня (измерение маршрута от старта, см. check_start_to_gate_route).
+const ROUTE_CELL := 0.25
+const ROUTE_X0 := 40.0
+const ROUTE_Z0 := -4.0
+const ROUTE_W := 408
+const ROUTE_H := 304
+const ROUTE_GATE_APPROACH := Vector2(90.0, 12.0)
+
 var failed := 0
 # Треугольники породы для проверок зоны (лучи видимости); наполняется в check_cave_shell,
 # иначе читается напрямую из CAVE_GLB_PATH — проверка зоны не зависит от порядка вызовов.
@@ -302,6 +340,7 @@ func _initialize() -> void:
 	await check_movement(level)
 	check_cave_shell()
 	await check_gate_entrance()
+	await check_zone_e2e(level)
 
 	print("failed: %d" % failed)
 	quit(EXIT_FAIL if failed > 0 else EXIT_OK)
@@ -1162,6 +1201,424 @@ func check_lever_zone_instance() -> void:
 	zone.free()
 
 
+# T7. Сквозной прогон собранной зоны: подойти к рычагу, открыть ворота, проехать из двора
+# через арку в зал. Пункты 1-3 брифа T7. Каждый прогон — на СВОЁМ экземпляре зоны:
+# находка T4 — position.y решётки при sync_to_physics не сбрасывается на живом инстансе,
+# поэтому проба «сначала закрыто» обязана начинаться со свежего.
+func check_zone_e2e(level: Node) -> void:
+	await check_gate_e2e_route()
+	var packed := load(GATE_SCENE) as PackedScene
+	if packed == null:
+		failed += 1
+		print("ПРОВАЛ T7: сцена зоны не загрузилась для замеров прохода и света: %s" % GATE_SCENE)
+		return
+	var zone := packed.instantiate() as Node3D
+	if zone == null:
+		failed += 1
+		print("ПРОВАЛ T7: сцена зоны не инстанцировалась для замеров прохода и света")
+		return
+	check_gate_e2e_path_width(zone)
+	check_floor_light(zone)
+	zone.free()
+	check_start_to_gate_route(level)
+
+
+# T7 п.1-3. Физика, не расчёт: капсула игрока едет по -X из двора в зал, каждый кадр снимается
+# лучом вниз вертикаль пола (ступень и провал), а перед ходом меряется зазок над головой.
+func check_gate_e2e_route() -> void:
+	var packed := load(GATE_SCENE) as PackedScene
+	if packed == null:
+		failed += 1
+		print("ПРОВАЛ T7: сцена зоны не загрузилась: %s" % GATE_SCENE)
+		return
+	var zone := packed.instantiate() as Node3D
+	if zone == null:
+		failed += 1
+		print("ПРОВАЛ T7: сцена зоны не инстанцировалась")
+		return
+	root.add_child(zone)
+	await process_frame
+	var lever := zone.get_node_or_null(LEVER_NODE)
+	var portcullis := zone.get_node_or_null("Portcullis")
+	if lever == null or portcullis == null or not lever.has_method("try_use"):
+		failed += 1
+		print("ПРОВАЛ T7: в зоне нет рычага с try_use() или Portcullis")
+		root.remove_child(zone)
+		zone.free()
+		return
+	if portcullis.is_open():
+		failed += 1
+		print("ПРОВАЛ T7: решётка открыта на входе сквозной пробы (нужен свежий экземпляр)")
+		root.remove_child(zone)
+		zone.free()
+		return
+
+	# Рычаг: игрок стоит в зоне действия и тянет его (бриф T7 п.1 — через try_use).
+	var capsule := spawn_probe_capsule(zone, LEVER_STAND)
+	for i in LEVER_ZONE_SETTLE_FRAMES:
+		await physics_frame
+	lever.set_physics_process(false)
+	var fired: bool = lever.try_use(true)
+	var frames := 0
+	while frames < PORTCULLIS_RAISE_FRAME_CAP and not portcullis.is_open():
+		await physics_frame
+		frames += 1
+
+	# Зазок над головой на всём пути: луч снизу вверх снимает потолок (арка, перемычку тоннеля,
+	# поднятую решётку). Луч идёт от головы капсулы вверх, а не сверху вниз: путь открыт, и
+	# старт сверху оказался бы ВНУТРИ породы, где первый пересечённый треугольник — случайный.
+	# Меряется на поднятой решётке — иначе это была бы проверка закрытой.
+	var clearance := e2e_head_clearance(zone)
+	var needed := PORTCULLIS_CAPSULE_HEIGHT + E2E_HEADROOM_MIN
+	if clearance < needed:
+		failed += 1
+		print("ПРОВАЛ T7: зазок над головой на пути %.2f м < капсула %.1f + запас %.1f = %.2f м"
+			% [clearance, PORTCULLIS_CAPSULE_HEIGHT, E2E_HEADROOM_MIN, needed])
+
+	# Ход: из двора через ворота в зал, с замером пола под капсулой.
+	move_probe_capsule(capsule, PORTCULLIS_START)
+	var stats := await drive_capsule(capsule, Vector3(-1.0, 0.0, 0.0), E2E_ROUTE_FRAMES, true)
+	var end: Vector3 = stats["end"]
+	var travelled := capsule_travel(end)
+	var step: float = stats["max_step"]
+	var sink: float = stats["max_sink"]
+	var hits: int = stats["hits"]
+	var bad: Array[String] = []
+	if not fired or not portcullis.is_open():
+		bad.append("рычаг не открыл ворота: try_use(true) -> %s, is_open() %s" % [str(fired), str(portcullis.is_open())])
+	if travelled < PORTCULLIS_START.x - E2E_ROUTE_END_X:
+		bad.append("капсула проехала %.2f м, до зала (x %.1f) не дошла: конец x %.2f" % [travelled, E2E_ROUTE_END_X, end.x])
+	if hits < E2E_ROUTE_FRAMES / 2:
+		bad.append("под капсулой нет пола в %d из %d кадров" % [E2E_ROUTE_FRAMES - hits, E2E_ROUTE_FRAMES])
+	if step > E2E_STEP_MAX:
+		bad.append("ступень на пути %.3f м > %.2f м (нужен пандус без подпрыгивания)" % [step, E2E_STEP_MAX])
+	if sink > E2E_SINK_MAX:
+		bad.append("капсула провалилась в пол на %.3f м > %.2f м" % [sink, E2E_SINK_MAX])
+	if bad.is_empty():
+		print("ok: T7 сквозной ход: рычаг открыл ворота за %d кадров, капсула проехала %.2f м (конец x %.2f <= %.1f), зазок над головой %.2f м, ступень на пути <= %.3f м, провал в пол <= %.3f м, пол под капсулой в %d из %d кадров"
+			% [frames, travelled, end.x, E2E_ROUTE_END_X, clearance, step, sink, hits, E2E_ROUTE_FRAMES])
+	else:
+		failed += 1
+		print("ПРОВАЛ T7 сквозной ход: %s" % "; ".join(bad))
+	drop_probe_capsule(zone, capsule)
+	lever.set_physics_process(true)
+	root.remove_child(zone)
+	zone.free()
+
+
+# Движение капсулы по прямой со скоростью контроллера. Общий шаг для проб T3 (push_capsule)
+# и сквозного прогона T7: при measure=true каждый кадр снимается лучом вниз вертикаль пола
+# под капсулой, и по ней считаются ступень (T7 п.3) и провал капсулы в пол.
+func drive_capsule(body: CharacterBody3D, dir: Vector3, frames: int, measure: bool = false) -> Dictionary:
+	var stats := {"end": body.global_position, "hits": 0, "max_step": 0.0, "max_sink": 0.0,
+		"floor_min": INF, "floor_max": -INF}
+	var prev_floor := INF
+	for i in frames:
+		body.velocity = dir * CONTROLLER_SCRIPT.SPEED
+		if measure:
+			# CharacterBody3D сам гравитацию не применяет, а пустая капсула (как в push_capsule)
+			# висит над полом на 0.05 м. С провалом в пол (T7 п.3) такая капсула ничего не
+			# измеряет, поэтому в замерном прогоне гравитация подаётся вручную.
+			body.velocity.y -= E2E_GRAVITY_STEP
+		body.move_and_slide()
+		await physics_frame
+		if not measure:
+			continue
+		var floor_y := floor_under_body(body)
+		if is_inf(floor_y):
+			continue
+		stats["hits"] = int(stats["hits"]) + 1
+		stats["floor_min"] = minf(float(stats["floor_min"]), floor_y)
+		stats["floor_max"] = maxf(float(stats["floor_max"]), floor_y)
+		if not is_inf(prev_floor):
+			stats["max_step"] = maxf(float(stats["max_step"]), floor_y - prev_floor)
+		prev_floor = floor_y
+		stats["max_sink"] = maxf(float(stats["max_sink"]), floor_y - body.global_position.y)
+	stats["end"] = body.global_position
+	return stats
+
+
+# Вертикаль пола под капсулой: ближайшее пересечение луча вниз, минус её собственная фигура.
+# INF, если под капсулой ничего нет (край обрыва) — тогда провал измерять нечем.
+func floor_under_body(body: CharacterBody3D) -> float:
+	var space: PhysicsDirectSpaceState3D = body.get_world_3d().direct_space_state
+	var from := body.global_position + Vector3(0.0, E2E_PROBE_UP, 0.0)
+	var to := body.global_position + Vector3(0.0, -E2E_PROBE_DOWN, 0.0)
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = [body.get_rid()]
+	var hit: Dictionary = space.intersect_ray(query)
+	if hit.is_empty():
+		return INF
+	return (hit["position"] as Vector3).y
+
+
+# Наименьший зазок над головой капсулы на всём пути двора и зала (локальные координаты зоны):
+# луч от головы капсулы вверх снимает арку, перемычку тоннеля и поднятую решётку. Возвращает
+# высоту самого низкого потолка над полом на пути.
+func e2e_head_clearance(zone: Node) -> float:
+	var lowest := INF
+	var at := PORTCULLIS_START.x
+	while at >= E2E_ROUTE_END_X:
+		var hit := zone_ray_up(zone, at, 0.0)
+		if not is_inf(hit):
+			lowest = minf(lowest, hit)
+		at -= E2E_HEAD_SCAN_STEP
+	return lowest
+
+
+# Первое пересечение луча вверх из высоты from_y, в локальных координатах зоны; INF, если нет.
+func zone_ray_up(zone: Node, x: float, z: float, from_y: float = 0.0) -> float:
+	var start_y := maxf(from_y, PORTCULLIS_CAPSULE_HEIGHT + 0.1)
+	var space: PhysicsDirectSpaceState3D = zone.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(zone.to_global(Vector3(x, start_y, z)),
+		zone.to_global(Vector3(x, E2E_HEAD_SCAN_TOP, z)))
+	var hit: Dictionary = space.intersect_ray(query)
+	if hit.is_empty():
+		return INF
+	return zone.to_local(hit["position"] as Vector3).y
+
+
+# T7 п.2. Реквизит не сужает проход: ищем наибольшую свободную полосу шириной >= 3 м вдоль
+# оси прохода (локальный z = 0) от двора до зала. Считаются только тела крупного реквизита
+# (GATE_BOXED_PROPS) — стены, пол и порода проход не сужают, это проверяет check_gate_arch
+# и физический ход выше.
+func check_gate_e2e_path_width(zone: Node) -> void:
+	var entries: Array = []
+	collect_colliders(zone, Transform3D.IDENTITY, entries)
+	var prop_bodies: Array[String] = []
+	for pair in GATE_BOXED_PROPS:
+		prop_bodies.append(pair[1])
+	var length_x := PORTCULLIS_START.x - E2E_ROUTE_END_X
+	var half := E2E_PATH_HALF_MAX
+	var found := false
+	var blockers: Array[String] = []
+	while half >= E2E_PATH_MIN * 0.5 - 0.0001:
+		var corridor := AABB(Vector3(E2E_ROUTE_END_X, 0.0, -half),
+			Vector3(length_x, PORTCULLIS_CAPSULE_HEIGHT, half * 2.0))
+		blockers.clear()
+		for entry in entries:
+			if not prop_bodies.has(String((entry[3] as Node).name)):
+				continue
+			if shape_hits_box(entry[1], entry[0], corridor):
+				blockers.append(String((entry[3] as Node).name))
+		if blockers.is_empty():
+			found = true
+			break
+		half -= E2E_PATH_STEP
+	if found and half * 2.0 >= E2E_PATH_MIN:
+		print("ok: T7 проход: реквизит не сужает коридор двора и зала — свободно >= %.2f м (проверено тел %d)"
+			% [half * 2.0, prop_bodies.size()])
+	else:
+		failed += 1
+		print("ПРОВАЛ T7 проход: свободная ширина коридора %.2f м < %.1f м, мешает: %s"
+			% [half * 2.0, E2E_PATH_MIN, ", ".join(blockers) if not blockers.is_empty() else "ничего (ширина не набралась)"])
+
+
+# T7 п.4. Освещённость пола. Гейт T5 держит только ненулевую энергию источников, поэтому
+# здесь считается ВКЛАД каждого источника в точку пола: energy / d^2, с проверкой дальности
+# и (для прожектора) попадания в конус. Godot домножает это на окно дальности и спад конуса,
+# оба <= 1, поэтому energy / d^2 — верхняя оценка: если и она мала, точка тёмная при любой
+# форме спада. Единица отсчёта — энергия 1.0 на расстоянии 1 м.
+func check_floor_light(zone: Node) -> void:
+	var lights := collect_lights(zone, [] as Array)
+	if lights.is_empty():
+		return   # отсутствие источников уже выведено в check_gate_lighting
+	var lit := 0
+	var lines: Array[String] = []
+	for sample in FLOOR_LIGHT_SAMPLES:
+		var at: Vector3 = sample[1]
+		var total := 0.0
+		var parts: Array[String] = []
+		for light in lights:
+			var c := light_contribution(light, at)
+			if c <= 0.0:
+				continue
+			total += c
+			parts.append("%s %.3f" % [light.name, c])
+		if total >= FLOOR_LIGHT_MIN:
+			lit += 1
+		lines.append("%s (%.1f, %.1f): %.3f%s" % [sample[0], at.x, at.z, total,
+			"" if parts.is_empty() else " <- " + ", ".join(parts)])
+	print("info: T7 освещённость пола (вклад energy/d^2, порог %.2f): %d из %d точек" % [FLOOR_LIGHT_MIN, lit, FLOOR_LIGHT_SAMPLES.size()])
+	for line in lines:
+		print("   info: %s" % line)
+
+
+# Вклад одного источника в точку пола: 0, если точка вне дальности или вне конуса прожектора.
+func light_contribution(light: Node, at: Vector3) -> float:
+	var node := light as Node3D
+	var from := world_position_of(node)
+	var to := at - from
+	var d := to.length()
+	if d <= 0.0:
+		return 0.0
+	var reach := 0.0
+	if light is SpotLight3D:
+		reach = (light as SpotLight3D).spot_range
+	elif light is OmniLight3D:
+		reach = (light as OmniLight3D).omni_range
+	if d > reach:
+		return 0.0
+	if light is SpotLight3D:
+		var forward: Vector3 = world_xform_of(node).basis * Vector3.FORWARD
+		if forward.normalized().dot(to.normalized()) < cos(deg_to_rad((light as SpotLight3D).spot_angle * 0.5)):
+			return 0.0
+	return (light as Light3D).light_energy / (d * d)
+
+
+# T7, маршрут уровня: ИЗМЕРЕНИЕ, не требование (никаких ok/ПРОВАЛ). Растр 0.25 м по данным
+# GridCollision, препятствия раздуты на радиус капсулы игрока; компоненты найдены заливкой.
+# Печатается, потому что на 15.10.2026 старт игрока и подход к воротам лежат в РАЗНЫХ
+# компонентах — лагерь отрезан от пещеры стенами GridMap. Это решение ведущего (коридор
+# наружу ещё не прорезан), а не дефект сборки зоны; когда прорежут, строка покажет один
+# компонент. Подробный разбор — в отчёте T7, вопрос 1.
+func check_start_to_gate_route(level: Node) -> void:
+	var container := level.get_node_or_null(GRID_COLLISION_NAME + "/" + COLLISION_CONTAINER_NAME)
+	if container == null:
+		print("info: T7 маршрут уровня: нет %s/%s, замер пропущен" % [GRID_COLLISION_NAME, COLLISION_CONTAINER_NAME])
+		return
+	var raster := route_raster(container)
+	var start_cell := route_cell_of(Vector2(MOVE_START.x, MOVE_START.z))
+	var gate_cell := route_nearest_free(raster, ROUTE_GATE_APPROACH)
+	var free_cells := 0
+	for value in raster:
+		if value == 1:
+			free_cells += 1
+	print("info: T7 маршрут уровня: растр %.2f м, свободных ячеек %d, компонент связности %d"
+		% [ROUTE_CELL, free_cells, route_component_count(raster)])
+	print("   info: старт игрока (%.1f, %.1f) и подход к воротам (%.1f, %.1f) связаны для капсулы: %s"
+		% [MOVE_START.x, MOVE_START.z, ROUTE_GATE_APPROACH.x, ROUTE_GATE_APPROACH.y,
+			str(route_connected(raster, start_cell, gate_cell))])
+
+
+# Свободные ячейки пола уровня для капсулы игрока: пол заливается первым, препятствия
+# (стены и мебель) раздуваются на радиус капсулы и залиты поверх. Тело самой зоны входа
+# (Module_GateEntrance) исключено — замер отвечает на вопрос о связности ПОЛА уровня,
+# а коллизия зоны проверяется физическим прогоном.
+func route_raster(container: Node) -> PackedByteArray:
+	var raster := PackedByteArray()
+	raster.resize(ROUTE_W * ROUTE_H)
+	var bodies: Array = container.get_children()
+	var zone_body := MODULE_BOX_PREFIX + GATE_INSTANCE_NAME
+	for b in bodies:
+		if String(b.name) != FLOOR_BODY_NAME:
+			continue
+		for shape in b.get_children():
+			var box := route_box_of(shape)
+			if box.size != Vector3.ZERO:
+				route_paint(raster, Rect2(box.position.x, box.position.z, box.size.x, box.size.z), 1)
+	for b in bodies:
+		if String(b.name) == FLOOR_BODY_NAME or String(b.name) == zone_body:
+			continue
+		for shape in b.get_children():
+			var box := route_box_of(shape)
+			if box.size == Vector3.ZERO:
+				continue
+			var grow := PORTCULLIS_CAPSULE_RADIUS
+			route_paint(raster, Rect2(box.position.x - grow, box.position.z - grow,
+				box.size.x + grow * 2.0, box.size.z + grow * 2.0), 0)
+	return raster
+
+
+# Мировая коробка BoxShape3D узла; нулевая, если фигура не коробка.
+func route_box_of(shape: Node) -> AABB:
+	if not (shape is CollisionShape3D):
+		return AABB()
+	var node := shape as CollisionShape3D
+	var box := node.shape as BoxShape3D
+	if box == null:
+		return AABB()
+	return AABB(node.global_position - box.size * 0.5, box.size)
+
+
+func route_paint(raster: PackedByteArray, r: Rect2, value: int) -> void:
+	var px0 := maxi(int(floor((r.position.x - ROUTE_X0) / ROUTE_CELL)), 0)
+	var px1 := mini(int(ceil((r.end.x - ROUTE_X0) / ROUTE_CELL)), ROUTE_W - 1)
+	var pz0 := maxi(int(floor((r.position.y - ROUTE_Z0) / ROUTE_CELL)), 0)
+	var pz1 := mini(int(ceil((r.end.y - ROUTE_Z0) / ROUTE_CELL)), ROUTE_H - 1)
+	for px in range(px0, px1):
+		for pz in range(pz0, pz1):
+			raster[pz * ROUTE_W + px] = value
+
+
+func route_cell_of(p: Vector2) -> int:
+	var px := int(floor((p.x - ROUTE_X0) / ROUTE_CELL))
+	var pz := int(floor((p.y - ROUTE_Z0) / ROUTE_CELL))
+	if px < 0 or pz < 0 or px >= ROUTE_W or pz >= ROUTE_H:
+		return -1
+	return pz * ROUTE_W + px
+
+
+func route_nearest_free(raster: PackedByteArray, p: Vector2) -> int:
+	var best := -1
+	var best_d := INF
+	for dz in range(-40, 41):
+		for dx in range(-40, 41):
+			var cell := route_cell_of(p + Vector2(float(dx), float(dz)) * ROUTE_CELL)
+			if cell < 0 or raster[cell] == 0:
+				continue
+			var d := Vector2(float(dx), float(dz)).length()
+			if d < best_d:
+				best_d = d
+				best = cell
+	return best
+
+
+# Связаны ли две ячейки растра для капсулы (заливка от первой до второй).
+func route_connected(raster: PackedByteArray, from_cell: int, to_cell: int) -> bool:
+	if from_cell < 0 or to_cell < 0 or raster[from_cell] == 0 or raster[to_cell] == 0:
+		return false
+	var labels := PackedInt32Array()
+	labels.resize(ROUTE_W * ROUTE_H)
+	var stack: Array = [from_cell]
+	labels[from_cell] = 1
+	while not stack.is_empty():
+		var i: int = stack.pop_back()
+		if i == to_cell:
+			return true
+		var px := i % ROUTE_W
+		var pz := i / ROUTE_W
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx: int = px + d.x
+			var nz: int = pz + d.y
+			if nx < 0 or nz < 0 or nx >= ROUTE_W or nz >= ROUTE_H:
+				continue
+			var j := nz * ROUTE_W + nx
+			if raster[j] == 0 or labels[j] != 0:
+				continue
+			labels[j] = 1
+			stack.append(j)
+	return false
+
+
+# Сколько всего компонент связности на растре (та же заливка, но пересчитывает все).
+func route_component_count(raster: PackedByteArray) -> int:
+	var labels := PackedInt32Array()
+	labels.resize(ROUTE_W * ROUTE_H)
+	var total := 0
+	for i in range(ROUTE_W * ROUTE_H):
+		if raster[i] == 0 or labels[i] != 0:
+			continue
+		total += 1
+		labels[i] = total
+		var stack: Array = [i]
+		while not stack.is_empty():
+			var c: int = stack.pop_back()
+			var px := c % ROUTE_W
+			var pz := c / ROUTE_W
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var nx: int = px + d.x
+				var nz: int = pz + d.y
+				if nx < 0 or nz < 0 or nx >= ROUTE_W or nz >= ROUTE_H:
+					continue
+				var j := nz * ROUTE_W + nx
+				if raster[j] == 0 or labels[j] != 0:
+					continue
+				labels[j] = total
+				stack.append(j)
+	return total
+
+
 # Все узлы зоны на месте; караулка и ход внутрь — коробки и маркер будущего хода.
 func check_gate_nodes(zone: Node) -> void:
 	var missing: Array[String] = []
@@ -1375,11 +1832,8 @@ func push_capsule(zone: Node, frames: int) -> Vector3:
 	body.global_position = PORTCULLIS_START
 	await physics_frame   # тело должно встать в физический мир до первого move_and_slide
 	var forward := Vector3(-1.0, 0.0, 0.0)
-	for i in frames:
-		body.velocity = forward * CONTROLLER_SCRIPT.SPEED
-		body.move_and_slide()
-		await physics_frame
-	var end := body.global_position
+	var stats := await drive_capsule(body, forward, frames)
+	var end: Vector3 = stats["end"]
 	print("info: капсула (прогон %d): старт (%.2f, %.2f, %.2f), конец (%.2f, %.2f, %.2f), путь по XZ %.2f м, шагов %d"
 		% [frames, PORTCULLIS_START.x, PORTCULLIS_START.y, PORTCULLIS_START.z, end.x, end.y, end.z, capsule_travel(end), frames])
 	zone.remove_child(body)
