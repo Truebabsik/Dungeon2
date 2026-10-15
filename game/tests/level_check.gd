@@ -15,7 +15,11 @@ const GRIDMAP_UPPER_NAME := "GridUpper"
 const GRIDMAP_UPPER_Y := 4.0
 const MODEL_PREFIX := "res://assets/kaykit/"
 const MODEL_SUFFIX := ".gltf"
-# Инстансы kaykit/*.gltf в сцене на момент правки: 26 (узлы MeshInstance3D пользователя сюда не входят).
+# Инстансы kaykit/*.gltf в сцене: 26 (узлы MeshInstance3D пользователя сюда не входят).
+# Число не изменилось, хотя надстройка Minecart убрана (T6): она бралась collect_modules
+# как модуль (Node3D без инстанса .gltf), и ПРОВАЛ на bad возвращался ДО сравнения числа —
+# старая константа 26 просто не проверялась. Инстанс зоны входа модулем не считается
+# (is_zone_instance), поэтому 26 — это ровно число инстансов kaykit/*.gltf.
 const MODULES_EXPECTED := 26
 const EXIT_OK := 0
 const EXIT_FAIL := 1
@@ -36,6 +40,7 @@ const FLOOR_GRID_NAME := "GridMapFloor"
 const GRID_COLLISION_NAME := "GridCollision"
 const COLLISION_CONTAINER_NAME := "Collision"
 const WALL_BOX_PREFIX := "Wall_"
+const MODULE_BOX_PREFIX := "Module_"
 const FLOOR_BODY_NAME := "Floor"
 const WALL_CELLS_EXPECTED := 115
 const FLOOR_CELLS_EXPECTED := 276
@@ -116,6 +121,34 @@ const ARCH_CLEAR_FROM := 1.0
 const ARCH_BODIES := ["ArchLegLBody", "ArchLegRBody", "ArchLintelBody"]
 # Единый допуск всех проверок зоны (мировые AABB, коробки, трансформы); проверки оболочки — CAVE_EPS.
 const GATE_BOX_EPS := 0.02
+
+# Встройка зоны входа в уровень (T6). Позиция выбрана пробой по данным GridCollision,
+# растёртым в растр 0.25 м (temp/T6-23-freespace-fine.log): из 387 подходящих начал
+# взято (100, 12). Пятно блока породы не задевает ни коробок стен, ни тел Module_*,
+# стоит на сплошном полу GridMapFloor, не накрывает старт игрока. Ось зоны не повернута:
+# конец коридора (локально -X, там CorridorFuture) смотрит на открытый пол пещеры.
+const GATE_INSTANCE_NAME := "GateEntrance"
+const GATE_POS := Vector3(100.0, 2.06, 12.0)
+const GATE_POS_TOL := 0.01
+# Габарит блока в локальных координатах зоны: x -8..+16 (24 м), z -8..+8 (16 м), y 0..9.
+const GATE_BLOCK_X_FROM := -8.0
+const GATE_BLOCK_X_TO := 16.0
+const GATE_BLOCK_Z_HALF := 8.0
+# Подход перед проёмом коридора: глубина 6 м к -X от пятна блока, ширина — коридор (3+ м).
+const MOUTH_DEPTH := 6.0
+const MOUTH_WIDTH := 4.0
+const MOUTH_SAMPLES := 4
+# Верх плиты пола уровня под пятном зоны (temp/T6-04-faces.log): 2.05. Зона стоит на
+# GATE_FLOOR_LIFT выше — при совпадении пол зоны и плита пола уровня легли бы в одну плоскость.
+const LEVEL_FLOOR_TOP := 2.05
+const GATE_FLOOR_LIFT := 0.01
+const GATE_FLOOR_LIFT_TOL := 0.005
+# Проба пола под пятном: сетка FOOTPRINT_SAMPLES x FOOTPRINT_SAMPLES точек по пятну.
+const FOOTPRINT_SAMPLES := 8
+# Надстройка, которую T6 убрала из level.tscn: вагонетка как прямой узел уровня.
+# Проверка «вагонетка есть» остаётся в GATE_NODE_NAMES — но там про зону, не про уровень.
+const LEGACY_MINECART_NAME := "Minecart"
+const LEGACY_MINECART_SCENE := "res://assets/minecart.glb"
 
 # Решётка ворот (T3; ход сокращён в T3-д). open_height — СОБСТВЕННАЯ высота подъёма решётки,
 # а не высота проёма (GATE_OPENING_HEIGHT = 5.0, решение пользователя 13.10.2026, ledger.md):
@@ -263,6 +296,7 @@ func _initialize() -> void:
 	check_animation(level)
 	check_grid_maps(level)
 	check_grid_collision(level)
+	check_zone_integration(level)
 	check_view_toggle(level)
 	check_mouse(level)
 	await check_movement(level)
@@ -282,12 +316,13 @@ func check_root(level: Node) -> void:
 	print("ПРОВАЛ корень сцены %s, ожидалось Level" % level.name)
 
 
-# Модули уровня: Node3D-дети Level без света, камеры, персонажа и GridMap.
+# Модули уровня: Node3D-дети Level без света, камеры, персонажа, GridMap и зон.
 # Исключение: прямой MeshInstance3D без инстанса сцены (узлы пользователя ChainLink, Cage и т.п.).
+# Зона входа — тоже не модуль: у неё своя сцена и своя коллизия, проверяемая check_gate_entrance.
 func collect_modules(level: Node) -> Array:
 	var modules: Array = []
 	for child in level.get_children():
-		if child is Light3D or child is Camera3D or has_character_instance(child) or is_grid_map(child):
+		if child is Light3D or child is Camera3D or has_character_instance(child) or is_grid_map(child) or is_zone_instance(child):
 			continue
 		if is_bare_mesh(child):
 			continue
@@ -464,6 +499,161 @@ func check_grid_collision(level: Node) -> void:
 	else:
 		failed += 1
 		print("ПРОВАЛ шейпов пола %d, ячеек %s %d, ожидалось %d" % [shapes, FLOOR_GRID_NAME, used_floor, FLOOR_CELLS_EXPECTED])
+
+
+# 5c. Встройка зоны входа в уровень (T6): инстанс на месте, его пятно не задевает стены,
+# пол и старт игрока; надстройки Minecart в level.tscn больше нет.
+# Числа уровня (модули, 115 коробок стен, 276 шейпов пола) не проверяем здесь отдельной
+# функцией: их уже ровно те же ожидания проверяют check_modules и check_grid_collision.
+func check_zone_integration(level: Node) -> void:
+	check_gate_placement(level)
+	check_legacy_minecart_removed(level)
+
+
+# Инстанс GateEntrance в level.tscn и условия, ради которых выбрано это место.
+# Пятно блока породы (24 x 16 м) сверяется с реальными коробками GridCollision, а не с
+# константой: место выбиралось пробой по этим же данным, и проверка держит ту же правду.
+func check_gate_placement(level: Node) -> void:
+	var node := level.get_node_or_null(GATE_INSTANCE_NAME)
+	if node == null or not (node is Node3D):
+		failed += 1
+		print("ПРОВАЛ в level.tscn нет узла %s" % GATE_INSTANCE_NAME)
+		return
+	var zone := node as Node3D
+	if zone.scene_file_path != GATE_SCENE:
+		failed += 1
+		print("ПРОВАЛ %s — не инстанс %s (path %s)" % [GATE_INSTANCE_NAME, GATE_SCENE, zone.scene_file_path])
+		return
+	var place := zone.global_position
+	if place.distance_to(GATE_POS) > GATE_POS_TOL:
+		failed += 1
+		print("ПРОВАЛ %s стоит в %s, ожидалось %s" % [GATE_INSTANCE_NAME, str(place), str(GATE_POS)])
+		return
+	# Пятно ниже считается в локальных осях зоны; поворот сделал бы его неверным.
+	if not zone.global_transform.basis.is_equal_approx(Basis.IDENTITY):
+		failed += 1
+		print("ПРОВАЛ %s повёрнут (basis %s), ожидалась единичная" % [GATE_INSTANCE_NAME, str(zone.global_transform.basis)])
+		return
+	if absf(place.y - (LEVEL_FLOOR_TOP + GATE_FLOOR_LIFT)) > GATE_FLOOR_LIFT_TOL:
+		failed += 1
+		print("ПРОВАЛ %s: низ блока y %.3f, ожидалось %.2f (верх плиты пола %.2f + подъём %.2f)"
+			% [GATE_INSTANCE_NAME, place.y, LEVEL_FLOOR_TOP + GATE_FLOOR_LIFT, LEVEL_FLOOR_TOP, GATE_FLOOR_LIFT])
+		return
+	var foot := Rect2(place.x + GATE_BLOCK_X_FROM, place.z - GATE_BLOCK_Z_HALF,
+		GATE_BLOCK_X_TO - GATE_BLOCK_X_FROM, GATE_BLOCK_Z_HALF * 2.0)
+	var container := level.get_node_or_null(GRID_COLLISION_NAME + "/" + COLLISION_CONTAINER_NAME)
+	if container == null:
+		failed += 1
+		print("ПРОВАЛ %s: нет %s/%s" % [GATE_INSTANCE_NAME, GRID_COLLISION_NAME, COLLISION_CONTAINER_NAME])
+		return
+	var walls := 0
+	var modules := 0
+	var own_body := MODULE_BOX_PREFIX + GATE_INSTANCE_NAME
+	for body in container.get_children():
+		var body_name := String(body.name)
+		var is_wall := body_name.begins_with(WALL_BOX_PREFIX)
+		if not is_wall and (not body_name.begins_with(MODULE_BOX_PREFIX) or body_name == own_body):
+			continue
+		if is_wall:
+			walls += 1
+		else:
+			modules += 1
+		for shape in body.get_children():
+			var box := plan_rect_of_shape(shape as CollisionShape3D)
+			if box.intersects(foot):
+				failed += 1
+				print("ПРОВАЛ пятно блока %s x %.1f..%.1f z %.1f..%.1f задевает %s (%.1f, %.1f, %.1f x %.1f)"
+					% [GATE_INSTANCE_NAME, foot.position.x, foot.end.x, foot.position.y, foot.end.y,
+						body_name, box.position.x, box.position.y, box.size.x, box.size.y])
+				return
+	var floor_body := container.get_node_or_null(FLOOR_BODY_NAME)
+	if floor_body == null:
+		failed += 1
+		print("ПРОВАЛ %s: нет тела пола %s" % [GATE_INSTANCE_NAME, FLOOR_BODY_NAME])
+		return
+	var probes := FOOTPRINT_SAMPLES * FOOTPRINT_SAMPLES
+	var missing := 0
+	for ix in range(FOOTPRINT_SAMPLES):
+		for iz in range(FOOTPRINT_SAMPLES):
+			var p := Vector2(foot.position.x + foot.size.x * (ix + 0.5) / FOOTPRINT_SAMPLES,
+				foot.position.y + foot.size.y * (iz + 0.5) / FOOTPRINT_SAMPLES)
+			if not floor_under(floor_body, p):
+				missing += 1
+	if missing > 0:
+		failed += 1
+		print("ПРОВАЛ под пятном блока нет пола уровня: %d из %d проб" % [missing, probes])
+		return
+	var character := character_of(level)
+	if character != null and foot.has_point(Vector2(character.position.x, character.position.z)):
+		failed += 1
+		print("ПРОВАЛ пятно блока накрывает старт игрока %s" % str(character.position))
+		return
+	# Проём коридора (локально -X, мир x = place.x + GATE_BLOCK_X_FROM) должен смотреть
+	# на пол пещеры: перед ним сплошной подход шириной коридора.
+	var mouth := Rect2(foot.position.x - MOUTH_DEPTH, foot.position.y + foot.size.y * 0.5 - MOUTH_WIDTH * 0.5,
+		MOUTH_DEPTH, MOUTH_WIDTH)
+	var mouth_bad := 0
+	for ix in range(MOUTH_SAMPLES):
+		for iz in range(MOUTH_SAMPLES):
+			var mp := Vector2(mouth.position.x + mouth.size.x * (ix + 0.5) / MOUTH_SAMPLES,
+				mouth.position.y + mouth.size.y * (iz + 0.5) / MOUTH_SAMPLES)
+			if not floor_under(floor_body, mp):
+				mouth_bad += 1
+	if mouth_bad > 0:
+		failed += 1
+		print("ПРОВАЛ перед проёмом коридора (%.1f, %.1f, %.1f x %.1f) нет пола: %d из %d проб"
+			% [mouth.position.x, mouth.position.y, mouth.size.x, mouth.size.y, mouth_bad, MOUTH_SAMPLES * MOUTH_SAMPLES])
+		return
+	print("ok: %s стоит в %s без поворота, пятно блока x %.1f..%.1f z %.1f..%.1f: стен не задевает (проверено %d коробок), мебели не задевает (тел %s %d), пол под всем пятном (%d проб), проём коридора на x %.1f смотрит на пол пещеры (%d проб), старт игрока %s вне"
+		% [GATE_INSTANCE_NAME, str(place), foot.position.x, foot.end.x, foot.position.y, foot.end.y,
+			walls, MODULE_BOX_PREFIX, modules, probes, foot.position.x, MOUTH_SAMPLES * MOUTH_SAMPLES,
+			str(character.position) if character != null else "нет"])
+
+
+# Прямого узла Minecart в level.tscn больше нет — вагонетка живёт внутри зоны входа
+# (её наличие проверяет GATE_NODE_NAMES в check_gate_nodes). Проверка отрицательная по
+# смыслу: пока надстройка стояла, collect_modules брал её модулем, а kind_of отдавал пустую
+# строку (путь не res://assets/kaykit/) — «ПРОВАЛ модули без инстанса .gltf: Minecart».
+func check_legacy_minecart_removed(level: Node) -> void:
+	var stale: Array[String] = []
+	for child in level.get_children():
+		var node3d := child as Node3D
+		if node3d != null and node3d.scene_file_path == LEGACY_MINECART_SCENE:
+			stale.append(String(child.name))
+	var direct := level.get_node_or_null(LEGACY_MINECART_NAME) != null
+	if not direct and stale.is_empty():
+		print("ok: надстройки %s в level.tscn нет (вагонетка живёт внутри зоны входа)" % LEGACY_MINECART_NAME)
+		return
+	failed += 1
+	print("ПРОВАЛ в level.tscn остался узел %s%s" % [LEGACY_MINECART_NAME,
+		(" / " + ", ".join(stale)) if not stale.is_empty() else ""])
+
+
+# Прямоугольник в плане (x, z) мирового AABB фигуры тела GridCollision: и коробки
+# стен (BoxShape3D), и тримеша мебели (ConcavePolygonShape3D, через faces_aabb).
+# Коробки стен не повёрнуты (grid_collision_builder.gd: add_box с нулевым поворотом),
+# поэтому AABB достаточно; мир — из global_transform узла.
+func plan_rect_of_shape(shape_node: CollisionShape3D) -> Rect2:
+	var local := AABB()
+	var box := shape_node.shape as BoxShape3D
+	if box != null:
+		local = AABB(-box.size * 0.5, box.size)
+	elif shape_node.shape is ConcavePolygonShape3D:
+		local = faces_aabb((shape_node.shape as ConcavePolygonShape3D).get_faces())
+	if local.size == Vector3.ZERO:
+		return Rect2()
+	var world := shape_node.global_transform * local
+	return Rect2(world.position.x, world.position.z, world.size.x, world.size.z)
+
+
+# Есть ли плита пола уровня под точкой плана (x, z).
+func floor_under(floor_body: Node, point: Vector2) -> bool:
+	for child in floor_body.get_children():
+		if not (child is CollisionShape3D):
+			continue
+		if plan_rect_of_shape(child as CollisionShape3D).has_point(point):
+			return true
+	return false
 
 
 # 6a. V через вызов toggle_view: переключает current между Camera3D и FPSCamera.
@@ -2475,6 +2665,12 @@ func is_bare_mesh(node: Node) -> bool:
 # GridMap уровня: не модуль, а палитра ячеек; считается по имени и типу.
 func is_grid_map(node: Node) -> bool:
 	return GRIDMAP_NAMES.has(node.name) and node is GridMap
+
+
+# Инстанс зоны входа в уровне: не модуль реквизита, а самостоятельная сцена со своей коллизией.
+# Определяется по пути сцены, а не по имени: переименование узла не должно ломать проверку.
+func is_zone_instance(node: Node) -> bool:
+	return node.scene_file_path == GATE_SCENE
 
 
 # kind инстанса по пути сцены; пустая строка, если узел не инстанс res://assets/kaykit/.

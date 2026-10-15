@@ -29,7 +29,7 @@
 [ext_resource type="PackedScene" uid="uid://c8v8ub7d0tbp0" path="res://assets/kaykit/rubble_large.gltf" id="27_h74y2"]
 [ext_resource type="PackedScene" uid="uid://cmbrydvpn74wy" path="res://assets/kaykit_adventurers/characters/Ranger.glb" id="28_ranger"]
 [ext_resource type="Script" path="res://level/grid_collision_builder.gd" id="29_gridcol"]
-[ext_resource type="PackedScene" uid="uid://cmv6m0xyehqql" path="res://assets/minecart.glb" id="30_minecart"]
+[ext_resource type="PackedScene" path="res://level/zones/gate_entrance.tscn" id="31_gate"]
 
 [sub_resource type="Environment" id="Environment_level"]
 background_mode = 1
@@ -42,9 +42,6 @@ tonemap_mode = 2
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_character"]
 radius = 0.35
 height = 1.8
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_minecart"]
-size = Vector3(0.885818, 0.953226, 0.566331)
 
 [node name="Level" type="Node3D" unique_id=336114472]
 
@@ -233,13 +230,20 @@ transform = Transform3D(0.01333312, 0, -0.9999111, 0, 1, 0, 0.9999111, 0, 0.0133
 [node name="GridCollision" type="Node" parent="." unique_id=1100000211]
 script = ExtResource("29_gridcol")
 
-[node name="Minecart" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 67.3, 2.05, 33)
-
-[node name="minecart" parent="Minecart" instance=ExtResource("30_minecart")]
-
-[node name="StaticBody3D" type="StaticBody3D" parent="Minecart"]
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Minecart/StaticBody3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.003415, 0.476613, 0.000664)
-shape = SubResource("BoxShape3D_minecart")
+; Зона входа (T6). Место выбрано пробой по данным GridCollision, растёртым в растр
+; 0.25 м (temp/T6-23-freespace-fine.log): 387 подходящих начал, выбрано (100, 12).
+;   - пятно блока породы x 92..116, z 4..20 (24 x 16 м) не задевает ни одной коробки
+;     стен GridCollision и ни одного тела Module_* (мебель уровня);
+;   - под всем пятном есть плита пола GridMapFloor;
+;   - старт игрока (66, 2.05, 34) вне пятна;
+;   - проём коридора смотрит на -X (мировой x = 92), перед ним 6 м свободного пола
+;     пещеры (x 86..92, z 10..14), по нему герой подходит от старта;
+;   - двор (локально x 7..15 -> мир 107..115) остаётся внутри породы: блок
+;     x -8..+16, двор вырезан в нём ямой (design.md:65-67). От края пола пещеры
+;     (x ~135.8) двор отделён 20 м — там потом пандус на поверхность, он вне задачи.
+; Ось зоны не повернута: поворот на 180° повернул бы проём к краю пещеры, где
+; герою неоткуда подойти.
+; y = 2.06 — на 1 см выше верха плиты пола уровня (2.05): при y = 2.05 пол зоны и
+; плита пола уровня лежали бы в одной плоскости (z-бой по всему залу и двору).
+[node name="GateEntrance" parent="." instance=ExtResource("31_gate")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 100, 2.06, 12)
